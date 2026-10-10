@@ -27,14 +27,23 @@ export const findPrim = (primitives: SketchItem[], id: string) =>
 export const primType = (primitives: SketchItem[], id: string) =>
   findPrim(primitives, id)?.type as string | undefined;
 
-/** Punto existente más cercano dentro del radio, para encadenar geometría. */
+/**
+ * Punto existente más cercano dentro del radio, para encadenar geometría.
+ *
+ * `solvedPositions` es dónde quedaron los puntos después de resolver, que es
+ * donde el usuario los ve. Las coordenadas guardadas en la primitiva son sólo
+ * la semilla del solver: en cuanto hay restricciones dejan de coincidir, y
+ * buscar contra ellas haría que los puntos no se puedan agarrar.
+ */
 export function snapPoint(
   primitives: SketchItem[], at: XY, radius: number,
+  solvedPositions?: Map<string, XY>,
 ): string | null {
   let best: string | null = null;
   let bestD = radius;
   for (const p of getPoints(primitives)) {
-    const d = Math.hypot(p.x - at.x, p.y - at.y);
+    const pos = solvedPositions?.get(p.id) ?? p;
+    const d = Math.hypot(pos.x - at.x, pos.y - at.y);
     if (d <= bestD) { bestD = d; best = p.id; }
   }
   return best;
@@ -195,8 +204,8 @@ export function addSpline(
 
 export type ConstraintKind =
   | 'horizontal' | 'vertical' | 'coincident' | 'parallel' | 'perpendicular'
-  | 'equal' | 'tangent' | 'symmetric' | 'concentric' | 'fix' | 'midpoint'
-  | 'distance' | 'radius' | 'diameter' | 'angle';
+  | 'equal' | 'tangent' | 'symmetric' | 'concentric' | 'collinear' | 'fix'
+  | 'midpoint' | 'distance' | 'radius' | 'diameter' | 'angle';
 
 export interface ConstraintSpec {
   kind: ConstraintKind;
@@ -217,6 +226,7 @@ export const CONSTRAINTS: ConstraintSpec[] = [
   { kind: 'coincident', label: 'Coincidente', accepts: allOf('point', 2) },
   { kind: 'parallel', label: 'Paralela', accepts: allOf('line', 2) },
   { kind: 'perpendicular', label: 'Perpendicular', accepts: allOf('line', 2) },
+  { kind: 'collinear', label: 'Colineal', accepts: allOf('line', 2) },
   { kind: 'equal', label: 'Igual', accepts: (t) => t.length === 2 && t[0] === t[1] },
   { kind: 'tangent', label: 'Tangente', accepts: (t) => t.length === 2 && t.includes('line') },
   { kind: 'symmetric', label: 'Simetría', accepts: only('point', 'point', 'line') },
@@ -277,6 +287,21 @@ export function applyConstraint(
 
     case 'perpendicular':
       return add({ type: 'perpendicular_ll', l1_id: items[0].id, l2_id: items[1].id });
+
+    case 'collinear': {
+      // Colineal = los dos extremos de una línea están sobre la otra. PlaneGCS
+      // no tiene una restricción propia para esto, pero el par lo expresa
+      // exactamente y deja la segunda línea sobre la recta de la primera.
+      const ends = endpointsOf(items[1]);
+      if (!ends) return { primitives, error: 'Elegí dos líneas' };
+      let out = primitives;
+      for (const p of ends) {
+        out = [...out, {
+          id: freshId(out, 'c'), type: 'point_on_line_pl', p_id: p, l_id: items[0].id,
+        } as unknown as SketchItem];
+      }
+      return { primitives: out };
+    }
 
     case 'equal': {
       if (types[0] === 'line') {
@@ -384,6 +409,51 @@ export function referencedIds(prim: Prim): string[] {
     else if (k.endsWith('_id') && typeof v === 'string') out.push(v);
   }
   return out;
+}
+
+/**
+ * Deja un punto arrastrado enganchado a donde cayó.
+ *
+ * Arrastrar un punto encima de otro y que queden pegados es la forma más
+ * natural de cerrar un contorno; soltar sobre una curva lo deja sobre ella.
+ * En los dos casos la unión queda como restricción, no como una casualidad de
+ * posición que el próximo arrastre rompería.
+ */
+export function attachDraggedPoint(
+  primitives: SketchItem[], pointId: string, snap: SnapTarget,
+): SketchItem[] {
+  const already = (type: string, target: string) =>
+    primitives.some((p) => {
+      const prim = p as Prim;
+      return prim.type === type
+        && prim.p_id === pointId
+        && (prim.l_id === target || prim.c_id === target || prim.a_id === target);
+    });
+
+  const target = snap.pointId;
+  if (target && target !== pointId) {
+    const dup = primitives.some((p) => {
+      const prim = p as Prim;
+      return prim.type === 'p2p_coincident'
+        && [prim.p1_id, prim.p2_id].includes(pointId)
+        && [prim.p1_id, prim.p2_id].includes(target);
+    });
+    if (dup) return primitives;
+    return [...primitives, {
+      id: freshId(primitives, 'c'), type: 'p2p_coincident',
+      p1_id: pointId, p2_id: target,
+    } as SketchItem];
+  }
+
+  const rule = snap.curveId && snap.curveType ? ON_CURVE[snap.curveType] : undefined;
+  if (rule && snap.curveId && !already(rule.type, snap.curveId)) {
+    return [...primitives, {
+      id: freshId(primitives, 'c'), type: rule.type,
+      p_id: pointId, [rule.key]: snap.curveId,
+    } as unknown as SketchItem];
+  }
+
+  return primitives;
 }
 
 /** Mueve un punto (arrastre en el editor). */

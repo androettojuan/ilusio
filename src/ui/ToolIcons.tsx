@@ -96,6 +96,13 @@ export const ICONS = {
       <path d="M7 6 L3.5 10 L7 14 Z" /><path d="M13 6 L16.5 10 L13 14 Z" />
     </Icon>
   ),
+  collinear: (
+    <Icon>
+      <line x1="2.5" y1="10" x2="17.5" y2="10" strokeDasharray="2 2" opacity={0.5} />
+      <line x1="3" y1="10" x2="8" y2="10" strokeWidth={2} />
+      <line x1="12" y1="10" x2="17" y2="10" strokeWidth={2} />
+    </Icon>
+  ),
   concentric: (
     <Icon><circle cx="10" cy="10" r="7" /><circle cx="10" cy="10" r="3" /></Icon>
   ),

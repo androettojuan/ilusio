@@ -72,7 +72,9 @@ hay capa de traducción entre lo que se dibuja y lo que se resuelve.
   con geometría que ya estaba, así que no hace falta volver al primer punto
   para cerrar contra otra curva.
 - **Restricciones**: horizontal, vertical, coincidente, paralela, perpendicular,
-  igual, tangente, simetría, concéntrica, punto medio y fijar.
+  colineal, igual, tangente, simetría, concéntrica, punto medio y fijar.
+  Además, **arrastrar un punto encima de otro los vuelve coincidentes**, y
+  soltarlo sobre una curva lo deja apoyado en ella.
 - **Medida al dibujar**: mientras trazás una línea o un círculo aparece su
   medida en vivo y podés escribirla directamente. La geometría se crea con ese
   valor exacto y queda acotada.
@@ -161,6 +163,15 @@ carga tarda unos segundos por el `.wasm` de OCCT.
   normales del boceto (arrastrables y restringibles) y la curva se recalcula a
   partir de ellos: en pantalla con una Catmull-Rom centrípeta, y en el sólido
   con `GeomAPI_PointsToBSpline`, que interpola con un error de ~1e-13.
+- **Los puntos se agarran donde se ven, no donde están guardados.** Las
+  coordenadas de una primitiva son la semilla del solver; en cuanto hay
+  restricciones dejan de coincidir con el resultado. Buscar contra la semilla
+  hacía que los puntos no se pudieran agarrar (`snapPoint` recibe las
+  posiciones resueltas).
+- **Arrastrar para unir deja una restricción, no una casualidad.** Si sólo se
+  movieran las coordenadas, el próximo arrastre rompería la unión.
+- **Colineal se expresa con dos "punto sobre línea".** PlaneGCS no tiene una
+  restricción propia, pero el par dice exactamente lo mismo.
 - **Una sola herramienta de cota, no un botón por tipo.** Tener Cota, Ángulo,
   Radio y Diámetro por separado obliga al usuario a saber de antemano qué va a
   medir. Mirando los tipos de lo que eligió, la herramienta lo deduce sola, que

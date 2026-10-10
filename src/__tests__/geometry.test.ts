@@ -18,8 +18,9 @@ import {
 } from '../model/dimensions';
 import { trimAt } from '../model/sketchTrim';
 import {
-  addPolygon, addRectangle, addSpline, circularPattern, deletePrimitives,
-  ensurePoint, freeSnap, mirror, offsetSelection, orphanPoints, pruneOrphanPoints,
+  addPolygon, addRectangle, addSpline, applyConstraint, attachDraggedPoint,
+  circularPattern, deletePrimitives, ensurePoint, freeSnap, mirror,
+  offsetSelection, orphanPoints, pruneOrphanPoints, snapPoint,
 } from '../model/sketchEdit';
 import {
   addFeature, dependentsOf, emptyDocument, makeExtrude, makeFillet, makeSketch,
@@ -833,5 +834,77 @@ describe('herramienta de cota', () => {
   it('avisa cuando no sabe qué medir', () => {
     const r = infer(['circ', 'arco']);
     expect(r.status).toBe('invalid');
+  });
+});
+
+
+describe('colineal y unión de puntos', () => {
+  const tipo = (p: SketchItem) => (p as { type: string }).type;
+  const dosLineas: SketchItem[] = [
+    { id: 'a', type: 'point', x: 0, y: 0, fixed: false },
+    { id: 'b', type: 'point', x: 10, y: 0, fixed: false },
+    { id: 'l1', type: 'line', p1_id: 'a', p2_id: 'b' },
+    { id: 'c', type: 'point', x: 30, y: 5, fixed: false },
+    { id: 'd', type: 'point', x: 40, y: 7, fixed: false },
+    { id: 'l2', type: 'line', p1_id: 'c', p2_id: 'd' },
+  ] as SketchItem[];
+
+  it('colineal pone los dos extremos de la segunda línea sobre la primera', () => {
+    const res = applyConstraint(dosLineas, 'collinear', ['l1', 'l2']);
+    expect(res.error).toBeUndefined();
+    const puestas = res.primitives.filter((p) => tipo(p) === 'point_on_line_pl');
+    expect(puestas).toHaveLength(2);
+    // Los dos extremos de l2, contra l1.
+    const sobre = puestas.map((p) => (p as unknown as { p_id: string; l_id: string }));
+    expect(sobre.map((x) => x.p_id).sort()).toEqual(['c', 'd']);
+    expect(sobre.every((x) => x.l_id === 'l1')).toBe(true);
+  });
+
+  it('soltar un punto sobre otro los vuelve coincidentes', () => {
+    const out = attachDraggedPoint(dosLineas, 'b', { at: { x: 30, y: 5 }, pointId: 'c' });
+    const co = out.filter((p) => tipo(p) === 'p2p_coincident');
+    expect(co).toHaveLength(1);
+    const ids = co[0] as unknown as { p1_id: string; p2_id: string };
+    expect([ids.p1_id, ids.p2_id].sort()).toEqual(['b', 'c']);
+  });
+
+  it('no duplica una coincidencia que ya existe', () => {
+    const conUnion = attachDraggedPoint(dosLineas, 'b', { at: { x: 30, y: 5 }, pointId: 'c' });
+    const otraVez = attachDraggedPoint(conUnion, 'b', { at: { x: 30, y: 5 }, pointId: 'c' });
+    expect(otraVez.filter((p) => tipo(p) === 'p2p_coincident')).toHaveLength(1);
+  });
+
+  it('no une un punto consigo mismo', () => {
+    const out = attachDraggedPoint(dosLineas, 'b', { at: { x: 10, y: 0 }, pointId: 'b' });
+    expect(out).toBe(dosLineas);
+  });
+
+  it('soltar un punto sobre una curva lo deja apoyado en ella', () => {
+    const out = attachDraggedPoint(dosLineas, 'd', {
+      at: { x: 5, y: 0 }, curveId: 'l1', curveType: 'line',
+    });
+    const sobre = out.find((p) => tipo(p) === 'point_on_line_pl') as unknown as
+      { p_id: string; l_id: string } | undefined;
+    expect(sobre).toMatchObject({ p_id: 'd', l_id: 'l1' });
+  });
+
+  it('soltar al aire no inventa ninguna restricción', () => {
+    expect(attachDraggedPoint(dosLineas, 'b', { at: { x: 99, y: 99 } })).toBe(dosLineas);
+  });
+});
+
+describe('agarrar puntos', () => {
+  const items: SketchItem[] = [
+    // La posición guardada es sólo la semilla del solver.
+    { id: 'p1', type: 'point', x: 0, y: 0, fixed: false },
+  ] as SketchItem[];
+
+  it('busca donde el punto se ve, no donde quedó guardado', () => {
+    const resuelto = new Map([['p1', { x: 50, y: 50 }]]);
+    // Sin las posiciones resueltas lo busca en el origen...
+    expect(snapPoint(items, { x: 50, y: 50 }, 3)).toBeNull();
+    // ...y con ellas lo encuentra donde el usuario lo está viendo.
+    expect(snapPoint(items, { x: 50, y: 50 }, 3, resuelto)).toBe('p1');
+    expect(snapPoint(items, { x: 0, y: 0 }, 3, resuelto)).toBeNull();
   });
 });

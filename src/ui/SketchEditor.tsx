@@ -8,7 +8,7 @@ import {
   CONSTRAINTS, addArc, addCircle, addLine, addPolygon, addRectangle, addSpline,
   applyConstraint, circularPattern, deletePrimitives, findPrim, freeSnap,
   getPoints, mirror, movePoint, offsetSelection, primType, rectangularPattern,
-  orphanPoints, pruneOrphanPoints, snapPoint,
+  attachDraggedPoint, orphanPoints, pruneOrphanPoints, snapPoint,
   type ApplyResult, type ConstraintKind, type SnapTarget, type XY,
 } from '../model/sketchEdit';
 import { rectFrom, selectInBox } from '../model/boxSelect';
@@ -275,7 +275,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
    * hacer clic si el trazo va a cerrar contra algo o va a quedar suelto.
    */
   const computeSnap = (at: XY, exclude?: string): SnapTarget => {
-    const pointId = snapPoint(sketch.primitives, at, snapRadius);
+    const pointId = snapPoint(sketch.primitives, at, snapRadius, solved?.points);
     if (pointId && pointId !== exclude) {
       const p = findPrim(sketch.primitives, pointId);
       const solvedPoint = solved?.points.get(pointId);
@@ -319,7 +319,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
 
   // --- Picking ---
   const pick = (at: XY, { points = true } = {}): string | null => {
-    const pid = points ? snapPoint(sketch.primitives, at, snapRadius) : null;
+    const pid = points ? snapPoint(sketch.primitives, at, snapRadius, solved?.points) : null;
     if (pid) return pid;
     if (!solved) return null;
     let best: string | null = null;
@@ -471,6 +471,22 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
     });
 
     setSelected((prev) => (add ? [...new Set([...prev, ...hits])] : hits));
+  };
+
+  /**
+   * Suelta el punto que se venía arrastrando. Si cayó sobre otro punto o sobre
+   * una curva, la unión queda registrada como restricción.
+   */
+  const releaseDrag = () => {
+    if (dragging && snap) {
+      const out = attachDraggedPoint(sketch.primitives, dragging, snap);
+      if (out !== sketch.primitives) {
+        setPrimitives(out);
+        setMessage(snap.pointId ? 'Puntos unidos' : 'Punto apoyado en la curva');
+      }
+    }
+    setDragging(null);
+    setSnap(null);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -788,9 +804,8 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
           onPointerMove={onPointerMove}
           onPointerUp={(e) => {
             finishBox(e.shiftKey);
-            setDragging(null);
+            releaseDrag();
             setDragLabel(null);
-            setSnap(null);
           }}
           onDoubleClick={() => {
             if (tool === 'spline') finishSpline(false);
