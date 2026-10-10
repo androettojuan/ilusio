@@ -9,7 +9,7 @@ import type {
   TopAbs_ShapeEnum, ChFi3d_FilletShape,
 } from 'opencascade.js';
 import type { BooleanOp, EdgeSelection, PlaneId } from '../model/types';
-import type { Loop, P2, Region, SolvedCurve } from './sketch';
+import { splinePolyline, type Loop, type P2, type Region, type SolvedCurve } from './sketch';
 
 /**
  * Los tipados generados de opencascade.js declaran los parámetros de enum con
@@ -68,21 +68,38 @@ export const flipPlane = (b: PlaneBasis): PlaneBasis => ({
 // Perfil -> cara
 // --------------------------------------------------------------------------
 
+/**
+ * Arista del tramo [t0, t1] de una curva.
+ *
+ * Los perfiles salen de partir las curvas donde se cruzan, así que casi nunca
+ * entra la curva entera: hay que construir el pedazo exacto o el sólido no
+ * coincide con lo que se ve en el boceto.
+ */
 function curveToEdge(
   oc: OpenCascadeInstance, b: PlaneBasis, curve: SolvedCurve,
+  t0 = 0, t1 = 1,
 ): TopoDS_Edge {
+  const whole = t0 <= 1e-9 && t1 >= 1 - 1e-9;
   const P = (p: P2) => new oc.gp_Pnt_3(...to3d(b, p));
   const normal = new oc.gp_Dir_4(...b.n);
   const uDir = new oc.gp_Dir_4(...b.u);
 
   if (curve.kind === 'line') {
-    return new oc.BRepBuilderAPI_MakeEdge_3(P(curve.a), P(curve.b)).Edge();
+    const at = (t: number): P2 => ({
+      x: curve.a.x + (curve.b.x - curve.a.x) * t,
+      y: curve.a.y + (curve.b.y - curve.a.y) * t,
+    });
+    return new oc.BRepBuilderAPI_MakeEdge_3(P(at(t0)), P(at(t1))).Edge();
   }
 
   if (curve.kind === 'spline') {
     // B-spline que pasa por los puntos marcados (el ajuste da un error del
     // orden de 1e-13, así que a efectos prácticos los interpola).
-    const pts = curve.periodic ? [...curve.through, curve.through[0]] : curve.through;
+    const pts = whole
+      ? (curve.periodic ? [...curve.through, curve.through[0]] : curve.through)
+      // Un pedazo se remuestrea: interpola la curva original con error
+      // despreciable y evita arrastrar la parametrización de PlaneGCS a OCCT.
+      : sampleSplineRange(curve, t0, t1);
     const arr = new oc.TColgp_Array1OfPnt_2(1, pts.length);
     pts.forEach((pt, i) => arr.SetValue(i + 1, P(pt)));
     const fit = new oc.GeomAPI_PointsToBSpline_2(
@@ -97,17 +114,47 @@ function curveToEdge(
   // El eje X del gp_Ax2 es `u`, que es justo el ángulo 0 del boceto.
   const ax2 = new oc.gp_Ax2_2(P(curve.c), normal, uDir);
   const circ = new oc.gp_Circ_2(ax2, curve.r);
+
   if (curve.kind === 'circle') {
-    return new oc.BRepBuilderAPI_MakeEdge_8(circ).Edge();
+    if (whole) return new oc.BRepBuilderAPI_MakeEdge_8(circ).Edge();
+    // El parámetro del círculo es la vuelta completa: t * 2π es el ángulo.
+    return new oc.BRepBuilderAPI_MakeEdge_9(
+      circ, t0 * 2 * Math.PI, t1 * 2 * Math.PI,
+    ).Edge();
   }
+
   let { a0, a1 } = curve;
   while (a1 <= a0) a1 += 2 * Math.PI;
-  return new oc.BRepBuilderAPI_MakeEdge_9(circ, a0, a1).Edge();
+  const span = a1 - a0;
+  return new oc.BRepBuilderAPI_MakeEdge_9(
+    circ, a0 + span * t0, a0 + span * t1,
+  ).Edge();
+}
+
+/** Puntos por los que pasa el tramo [t0, t1] de una curva por puntos. */
+function sampleSplineRange(
+  curve: Extract<SolvedCurve, { kind: 'spline' }>, t0: number, t1: number,
+): P2[] {
+  const poly = splinePolyline(curve.through, curve.periodic, 48);
+  const n = poly.length - 1;
+  const at = (t: number): P2 => {
+    const raw = Math.max(0, Math.min(n, (t > 1 ? t - 1 : t) * n));
+    const i = Math.min(n - 1, Math.floor(raw));
+    const f = raw - i;
+    return {
+      x: poly[i].x + (poly[i + 1].x - poly[i].x) * f,
+      y: poly[i].y + (poly[i + 1].y - poly[i].y) * f,
+    };
+  };
+  const steps = Math.max(3, Math.ceil(Math.abs(t1 - t0) * n));
+  return Array.from({ length: steps + 1 }, (_, i) => at(t0 + ((t1 - t0) * i) / steps));
 }
 
 export function loopToWire(oc: OpenCascadeInstance, b: PlaneBasis, loop: Loop): TopoDS_Wire {
   const mw = new oc.BRepBuilderAPI_MakeWire_1();
-  for (const seg of loop.segments) mw.Add_1(curveToEdge(oc, b, seg.curve));
+  for (const seg of loop.segments) {
+    mw.Add_1(curveToEdge(oc, b, seg.curve, seg.t0, seg.t1));
+  }
   return mw.Wire();
 }
 

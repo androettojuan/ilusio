@@ -50,6 +50,26 @@ base de datos.
 El boceto se guarda directamente en el formato que consume PlaneGCS, así que no
 hay capa de traducción entre lo que se dibuja y lo que se resuelve.
 
+### De boceto a sólido: la descomposición en perfiles
+
+Encadenar curvas por sus extremos no alcanza. Una línea que cruza por el medio
+de un triángulo lo parte en dos, y ninguno de los dos pedazos es una cadena de
+curvas completas. Lo que se hace ([`src/kernel/planar.ts`](src/kernel/planar.ts)):
+
+1. Se parten todas las curvas donde se cruzan entre sí. Los cortes se calculan
+   una sola vez y se agrupan, así todas las curvas que pasan por un cruce usan
+   exactamente el mismo punto; si cada una se partiera en el punto que calculó
+   por su cuenta, los extremos quedarían a un micrón y el grafo no cerraría.
+2. Con los pedazos se arma un grafo plano de semiaristas, ordenadas por ángulo
+   en cada nodo.
+3. Se recorre girando siempre al siguiente en sentido horario desde el gemelo
+   del que llegó: cada vuelta encierra una cara mínima.
+4. Las caras de área positiva son el interior; la negativa es el contorno de
+   afuera y se descarta.
+
+Después `findRegions` decide por contención cuál es contorno y cuál agujero, y
+cada perfil recibe su índice estable por centroide.
+
 ### Mapa del código
 
 | Carpeta | Qué hay |
@@ -260,6 +280,9 @@ carga tarda unos segundos por el `.wasm` de OCCT.
   a otra. Las selecciones por regla (`todas`, `sólo verticales`) son inmunes.
 - **Los patrones de boceto son copias**, no features paramétricos: cambiar el
   original no actualiza las copias. La simetría sí queda ligada.
+- **La descomposición en perfiles es O(n²) en cantidad de curvas.** Se cruzan
+  todas contra todas sin índice espacial. Con bocetos normales y SVG de un par
+  de cientos de segmentos va en milisegundos; con miles se va a notar.
 - **El kernel corre en el hilo principal.** Una reconstrucción pesada congela la
   UI unos cientos de milisegundos.
 - **Las imágenes de lienzo se guardan como data URL** dentro del documento, lo

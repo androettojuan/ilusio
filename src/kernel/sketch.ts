@@ -6,6 +6,7 @@
  */
 import type { SketchPrimitive } from '@salusoft89/planegcs';
 import { getSolver } from './solver';
+import { findFaces } from './planar';
 import { isSpline, type SketchFeature, type SketchItem } from '../model/types';
 
 export interface P2 { x: number; y: number }
@@ -118,7 +119,13 @@ export async function solveSketch(
 // Detección de bucles
 // --------------------------------------------------------------------------
 
-export interface LoopSegment { curve: SolvedCurve; reversed: boolean }
+export interface LoopSegment {
+  curve: SolvedCurve;
+  reversed: boolean;
+  /** Tramo de la curva que entra en el bucle, en parámetro 0..1. */
+  t0: number;
+  t1: number;
+}
 
 export interface Loop {
   segments: LoopSegment[];
@@ -128,18 +135,7 @@ export interface Loop {
   polyline: P2[];
 }
 
-const TOL = 1e-6;
-const key = (p: P2) => `${Math.round(p.x / TOL)}:${Math.round(p.y / TOL)}`;
 
-const endpoints = (c: SolvedCurve): [P2, P2] | null => {
-  if (c.kind === 'line') return [c.a, c.b];
-  if (c.kind === 'arc') return [c.start, c.end];
-  // Una curva por puntos encadena como cualquier otra, salvo que sea cerrada.
-  if (c.kind === 'spline' && !c.periodic) {
-    return [c.through[0], c.through[c.through.length - 1]];
-  }
-  return null;
-};
 
 /**
  * Catmull-Rom centrípeta por los puntos dados.
@@ -198,35 +194,7 @@ export function curveToPolyline(curve: SolvedCurve, steps = 48): P2[] {
     onCircle(curve.c, curve.r, a0 + ((a1 - a0) * i) / steps));
 }
 
-/** Muestrea una curva como polilínea (sin repetir el punto inicial). */
-function sample(seg: LoopSegment, steps = 24): P2[] {
-  const { curve, reversed } = seg;
-  if (curve.kind === 'line') return [reversed ? curve.a : curve.b];
-  if (curve.kind === 'spline') {
-    const poly = splinePolyline(curve.through, curve.periodic);
-    return (reversed ? [...poly].reverse() : poly).slice(1);
-  }
-  if (curve.kind === 'circle') {
-    return Array.from({ length: steps }, (_, i) =>
-      onCircle(curve.c, curve.r, ((i + 1) / steps) * 2 * Math.PI));
-  }
-  let { a0, a1 } = curve;
-  while (a1 < a0) a1 += 2 * Math.PI;
-  return Array.from({ length: steps }, (_, i) => {
-    const t = (i + 1) / steps;
-    const a = reversed ? a1 + (a0 - a1) * t : a0 + (a1 - a0) * t;
-    return onCircle(curve.c, curve.r, a);
-  });
-}
 
-function polygonArea(poly: P2[]): number {
-  let s = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i], b = poly[(i + 1) % poly.length];
-    s += a.x * b.y - b.x * a.y;
-  }
-  return s / 2;
-}
 
 function pointInPolygon(p: P2, poly: P2[]): boolean {
   let inside = false;
@@ -245,59 +213,24 @@ function pointInPolygon(p: P2, poly: P2[]): boolean {
  * coincidentes: las cadenas que no cierran (perfiles abiertos) se descartan,
  * porque no se pueden extruir.
  */
+/**
+ * Perfiles cerrados del boceto.
+ *
+ * Delega en la descomposición planar: hay que partir las curvas donde se
+ * cruzan, porque una línea que atraviesa una región la parte en dos y ninguno
+ * de los pedazos es una cadena de curvas completas.
+ */
 export function findLoops(curves: SolvedCurve[]): Loop[] {
-  const loops: Loop[] = [];
-
-  const close = (segments: LoopSegment[]) => {
-    const polyline = segments.flatMap((s) => sample(s));
-    loops.push({ segments, polyline, signedArea: polygonArea(polyline) });
-  };
-
-  for (const c of curves) {
-    if (c.kind === 'circle' || (c.kind === 'spline' && c.periodic)) {
-      close([{ curve: c, reversed: false }]);
-    }
-  }
-
-  // Grafo de extremos: cada nodo es una posición, cada arista una curva.
-  const chainable = curves.filter((c) => endpoints(c) !== null);
-  const nodes = new Map<string, SolvedCurve[]>();
-  for (const c of chainable) {
-    for (const p of endpoints(c)!) {
-      const k = key(p);
-      if (!nodes.has(k)) nodes.set(k, []);
-      nodes.get(k)!.push(c);
-    }
-  }
-
-  const used = new Set<string>();
-  for (const seed of chainable) {
-    if (used.has(seed.id)) continue;
-
-    const segments: LoopSegment[] = [];
-    let current = seed;
-    let [, head] = endpoints(seed)!;
-    used.add(seed.id);
-    segments.push({ curve: seed, reversed: false });
-    const startKey = key(endpoints(seed)![0]);
-
-    while (key(head) !== startKey) {
-      const next = (nodes.get(key(head)) ?? []).find(
-        (c) => c.id !== current.id && !used.has(c.id),
-      );
-      if (!next) break; // cadena abierta: no sirve para extruir
-      const [na, nb] = endpoints(next)!;
-      const reversed = key(nb) === key(head);
-      head = reversed ? na : nb;
-      used.add(next.id);
-      segments.push({ curve: next, reversed });
-      current = next;
-    }
-
-    if (key(head) === startKey && segments.length > 1) close(segments);
-  }
-
-  return loops;
+  return findFaces(curves).map((face) => ({
+    segments: face.pieces.map((p) => ({
+      curve: p.piece.curve,
+      reversed: p.reversed,
+      t0: p.piece.t0,
+      t1: p.piece.t1,
+    })),
+    polyline: face.polyline,
+    signedArea: face.signedArea,
+  }));
 }
 
 export interface Region {
@@ -329,7 +262,8 @@ function centroidOf(poly: P2[]): P2 {
       y: poly.reduce((s2, p) => s2 + p.y, 0) / poly.length,
     };
   }
-  return { x: cx / (3 * a), y: cy / (3 * a) };
+  // El `+ 0` evita devolver -0, que rompe comparaciones y se ve feo.
+  return { x: cx / (3 * a) + 0, y: cy / (3 * a) + 0 };
 }
 
 /**

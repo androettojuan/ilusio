@@ -228,8 +228,11 @@ describe('curva por puntos', () => {
   });
 
   it('cierra un perfil junto con una línea', () => {
+    // La curva se mantiene de un solo lado de la línea, así que encierran una
+    // única región. (Si la cruzara, la descomposición la partiría en varias,
+    // que es justamente lo que tiene que hacer.)
     const loops = findLoops([
-      spline('s1', [[0, 0], [30, 25], [60, -15], [90, 0]]),
+      spline('s1', [[0, 0], [30, 25], [60, 25], [90, 0]]),
       line('l1', 90, 0, 0, 0),
     ]);
     expect(loops).toHaveLength(1);
@@ -293,7 +296,7 @@ describe('perfiles con índice estable', () => {
 
   it('ordena por centroide, no por orden de dibujo', () => {
     const regions = orderedRegions(tresCirculos);
-    expect(regions.map((r) => Math.round(r.centroid.x))).toEqual([-40, 0, 40]);
+    [-40, 0, 40].forEach((x, i) => expect(regions[i].centroid.x).toBeCloseTo(x, 6));
     expect(regions.map((r) => r.index)).toEqual([0, 1, 2]);
   });
 
