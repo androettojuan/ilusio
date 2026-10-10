@@ -40,8 +40,13 @@ const isClosed = (c: SolvedCurve) =>
  *
  * `t1` puede pasar de 1 en el pedazo que da la vuelta de una curva cerrada:
  * se recorre hacia adelante y el parámetro se envuelve, no se va para atrás.
+ *
+ * El muestreo define el área que se le muestra al usuario en la lista de
+ * perfiles, así que conviene que sea fino: con 24 tramos un sector de círculo
+ * quedaba casi un 1 % corto. La geometría del sólido no sale de acá, la
+ * construye OCCT con la curva exacta.
  */
-function piecePolyline(curve: SolvedCurve, t0: number, t1: number, steps = 24): P2[] {
+function piecePolyline(curve: SolvedCurve, t0: number, t1: number, steps = 64): P2[] {
   const wrap = (t: number) => (t > 1 ? t - 1 : t);
   if (curve.kind === 'line') {
     return [pointAtParam(curve, t0), pointAtParam(curve, wrap(t1))];
