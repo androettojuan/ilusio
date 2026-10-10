@@ -112,7 +112,8 @@ cada perfil recibe su índice estable por centroide.
   azul llena); de derecha a izquierda, todo lo que la ventana toque (caja verde
   punteada). `Ctrl` suma a lo ya seleccionado y `Escape` cancela.
 - **`Shift` fija el trazo** a la horizontal o la vertical mientras dibujás.
-- **Modificar boceto**: simetría (deja la restricción puesta, no es una copia
+- **Modificar boceto**: **empalme y chaflán** sobre una esquina (elegís las dos
+  líneas que se tocan), simetría (deja la restricción puesta, no es una copia
   muerta), patrón rectangular, patrón circular, desfase, recortar (también
   sobre curvas por puntos), borrar. Al borrar geometría se van también los
   puntos que la sostenían; los que ya estuvieran sueltos se marcan en rojo y
@@ -185,6 +186,16 @@ carga tarda unos segundos por el `.wasm` de OCCT.
   normales del boceto (arrastrables y restringibles) y la curva se recalcula a
   partir de ellos: en pantalla con una Catmull-Rom centrípeta, y en el sólido
   con `GeomAPI_PointsToBSpline`, que interpola con un error de ~1e-13.
+- **El empalme del boceto deja tangencia y radio, no un arco suelto.** Las
+  líneas se acortan hasta los puntos de tangencia y el arco se ata con
+  `tangent_la` en las dos más su radio, así sigue empalmando si después se
+  mueven las líneas.
+- **El orden de las primitivas importa para PlaneGCS.** Resuelve las
+  referencias a medida que recorre la lista, así que una línea que aparece
+  antes que sus puntos falla con "sketch object not found". Editar el boceto
+  puede romper ese orden sin que se note (el empalme reapunta líneas viejas a
+  puntos nuevos), así que `orderForSolver` lo garantiza en un solo lugar en vez
+  de confiar en que cada función de edición lo respete.
 - **El punto medio deja restricción, no sólo posición.** Enganchar al medio y
   que después la línea cambie dejaría el punto descentrado. Se guarda como "los
   dos extremos son simétricos respecto de este punto", así sigue siendo el
@@ -293,8 +304,8 @@ carga tarda unos segundos por el `.wasm` de OCCT.
 - Recortar el `.wasm` con un build a medida de opencascade.js (se usa un 5 % de
   OCCT); debería bajar de 50 MB a unos pocos.
 - Mover el kernel a un Web Worker.
-- Más herramientas de boceto: elipse, ranura, texto, empalme y chaflán 2D,
-  alargar, partir, escala, mover/copiar.
+- Más herramientas de boceto: elipse, ranura, texto, alargar, partir, escala,
+  mover/copiar.
 - Cotas atadas a parámetros con nombre (`ancho = 80`), que PlaneGCS ya soporta.
 - Selección de aristas con el mouse en el visor 3D (los perfiles y las caras ya
   se eligen así).

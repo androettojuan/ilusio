@@ -19,9 +19,10 @@ import {
 import { trimAt } from '../model/sketchTrim';
 import {
   addPolygon, addRectangle, addSpline, applyConstraint, attachDraggedPoint,
-  circularPattern, deletePrimitives, ensurePoint, freeSnap, mirror,
-  offsetSelection, orphanPoints, pruneOrphanPoints, snapPoint,
+  chamferLines, circularPattern, deletePrimitives, ensurePoint, filletLines,
+  freeSnap, mirror, offsetSelection, orphanPoints, pruneOrphanPoints, snapPoint,
 } from '../model/sketchEdit';
+import { orderForSolver } from '../kernel/sketch';
 import {
   addFeature, dependentsOf, emptyDocument, makeExtrude, makeFillet, makeSketch,
   removeFeatures, setRollback,
@@ -1036,5 +1037,116 @@ describe('enganche al punto medio', () => {
     const res = ensurePoint(conPunto, { at: { x: 50, y: 0 }, pointId: 'medio' }, 1);
     expect(res.id).toBe('medio');
     expect(res.primitives).toBe(conPunto);
+  });
+});
+
+
+describe('empalme y chaflán del boceto', () => {
+  const tipo = (p: SketchItem) => (p as { type: string }).type;
+
+  /** Esquina en ángulo recto: (0,100) - (0,0) - (100,0). */
+  const esquina = (): SketchItem[] => [
+    { id: 'arriba', type: 'point', x: 0, y: 100, fixed: false },
+    { id: 'c', type: 'point', x: 0, y: 0, fixed: false },
+    { id: 'derecha', type: 'point', x: 100, y: 0, fixed: false },
+    { id: 'l1', type: 'line', p1_id: 'arriba', p2_id: 'c' },
+    { id: 'l2', type: 'line', p1_id: 'c', p2_id: 'derecha' },
+  ] as SketchItem[];
+
+  const posiciones = new Map([
+    ['arriba', { x: 0, y: 100 }], ['c', { x: 0, y: 0 }], ['derecha', { x: 100, y: 0 }],
+  ]);
+
+  it('mete un arco tangente y deja las restricciones que lo sostienen', () => {
+    const res = filletLines(esquina(), posiciones, 'l1', 'l2', 20);
+    expect(res.error).toBeUndefined();
+    expect(res.primitives.filter((p) => tipo(p) === 'arc')).toHaveLength(1);
+    expect(res.primitives.filter((p) => tipo(p) === 'tangent_la')).toHaveLength(2);
+    const radio = res.primitives.find((p) => tipo(p) === 'arc_radius') as unknown as
+      { radius: number };
+    expect(radio.radius).toBe(20);
+  });
+
+  it('en un ángulo recto los puntos de tangencia quedan a una distancia igual al radio', () => {
+    const res = filletLines(esquina(), posiciones, 'l1', 'l2', 20);
+    const puntos = res.primitives
+      .filter((p) => tipo(p) === 'point')
+      .map((p) => p as unknown as { x: number; y: number });
+    // Tangentes en (0,20) y (20,0), centro en (20,20).
+    const tiene = (x: number, y: number) =>
+      puntos.some((p) => Math.hypot(p.x - x, p.y - y) < 1e-9);
+    expect(tiene(0, 20)).toBe(true);
+    expect(tiene(20, 0)).toBe(true);
+    expect(tiene(20, 20)).toBe(true);
+  });
+
+  it('la esquina vieja se va si no la usa nadie más', () => {
+    const res = filletLines(esquina(), posiciones, 'l1', 'l2', 20);
+    expect(res.primitives.some((p) => (p as { id: string }).id === 'c')).toBe(false);
+  });
+
+  it('el chaflán deja un tramo recto en vez del arco', () => {
+    const res = chamferLines(esquina(), posiciones, 'l1', 'l2', 30);
+    expect(res.error).toBeUndefined();
+    expect(res.primitives.filter((p) => tipo(p) === 'arc')).toHaveLength(0);
+    expect(res.primitives.filter((p) => tipo(p) === 'line')).toHaveLength(3);
+  });
+
+  it('avisa si el radio no entra en la esquina', () => {
+    const res = filletLines(esquina(), posiciones, 'l1', 'l2', 500);
+    expect(res.error).toMatch(/no entra/);
+  });
+
+  it('avisa si las líneas no se tocan', () => {
+    const sueltas: SketchItem[] = [
+      { id: 'a', type: 'point', x: 0, y: 0, fixed: false },
+      { id: 'b', type: 'point', x: 10, y: 0, fixed: false },
+      { id: 'l1', type: 'line', p1_id: 'a', p2_id: 'b' },
+      { id: 'c', type: 'point', x: 50, y: 50, fixed: false },
+      { id: 'd', type: 'point', x: 60, y: 50, fixed: false },
+      { id: 'l2', type: 'line', p1_id: 'c', p2_id: 'd' },
+    ] as SketchItem[];
+    expect(filletLines(sueltas, new Map(), 'l1', 'l2', 5).error).toMatch(/tocarse/);
+  });
+
+  it('no empalma líneas alineadas: no hay esquina', () => {
+    const rectas: SketchItem[] = [
+      { id: 'a', type: 'point', x: 0, y: 0, fixed: false },
+      { id: 'm', type: 'point', x: 50, y: 0, fixed: false },
+      { id: 'b', type: 'point', x: 100, y: 0, fixed: false },
+      { id: 'l1', type: 'line', p1_id: 'a', p2_id: 'm' },
+      { id: 'l2', type: 'line', p1_id: 'm', p2_id: 'b' },
+    ] as SketchItem[];
+    const pos = new Map([
+      ['a', { x: 0, y: 0 }], ['m', { x: 50, y: 0 }], ['b', { x: 100, y: 0 }],
+    ]);
+    expect(filletLines(rectas, pos, 'l1', 'l2', 5).error).toBeDefined();
+  });
+
+  it('un radio de cero o negativo no pasa', () => {
+    expect(filletLines(esquina(), posiciones, 'l1', 'l2', 0).error).toBeDefined();
+    expect(filletLines(esquina(), posiciones, 'l1', 'l2', -3).error).toBeDefined();
+  });
+});
+
+describe('orden que necesita el solver', () => {
+  it('los puntos van primero, después la geometría y al final las restricciones', () => {
+    const desordenado = [
+      { id: 'h', type: 'horizontal_l', l_id: 'l1' },
+      { id: 'l1', type: 'line', p1_id: 'a', p2_id: 'b' },
+      { id: 'a', type: 'point', x: 0, y: 0, fixed: false },
+      { id: 'ci', type: 'circle', c_id: 'a', radius: 5 },
+      { id: 'b', type: 'point', x: 10, y: 0, fixed: false },
+    ] as never[];
+    expect(orderForSolver(desordenado).map((p) => (p as { id: string }).id))
+      .toEqual(['a', 'b', 'l1', 'ci', 'h']);
+  });
+
+  it('dentro de cada grupo respeta el orden original', () => {
+    const items = [
+      { id: 'p2', type: 'point', x: 1, y: 1, fixed: false },
+      { id: 'p1', type: 'point', x: 0, y: 0, fixed: false },
+    ] as never[];
+    expect(orderForSolver(items).map((p) => (p as { id: string }).id)).toEqual(['p2', 'p1']);
   });
 });

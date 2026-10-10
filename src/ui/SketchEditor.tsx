@@ -8,7 +8,8 @@ import {
   CONSTRAINTS, addArc, addCircle, addLine, addPolygon, addRectangle, addSpline,
   applyConstraint, circularPattern, deletePrimitives, findPrim, freeSnap,
   getPoints, mirror, movePoint, offsetSelection, primType, rectangularPattern,
-  attachDraggedPoint, orphanPoints, pruneOrphanPoints, snapPoint,
+  attachDraggedPoint, chamferLines, filletLines, orphanPoints, pruneOrphanPoints,
+  snapPoint,
   type ApplyResult, type ConstraintKind, type SnapTarget, type XY,
 } from '../model/sketchEdit';
 import { rectFrom, selectInBox } from '../model/boxSelect';
@@ -279,6 +280,24 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
     applyResult(circularPattern(
       sketch.primitives, selected.filter((id) => id !== center), center, count, angle,
     ));
+  };
+
+  /** Dos líneas elegidas, en el orden en que se marcaron. */
+  const twoLines = () =>
+    selected.filter((id) => primType(sketch.primitives, id) === 'line');
+
+  const doFillet = () => {
+    const [a, b] = twoLines();
+    const r = askNumber('Radio del empalme (mm)', 5);
+    if (r === null) return;
+    applyResult(filletLines(sketch.primitives, solved?.points ?? new Map(), a, b, r));
+  };
+
+  const doChamfer = () => {
+    const [a, b] = twoLines();
+    const d = askNumber('Distancia del chaflán (mm)', 5);
+    if (d === null) return;
+    applyResult(chamferLines(sketch.primitives, solved?.points ?? new Map(), a, b, d));
   };
 
   const doOffset = () => {
@@ -804,6 +823,20 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
         <div className="ribbon-group">
           <div className="row">
             <ToolButton
+              icon="fillet" label="Empalme"
+              data-testid="mod-fillet"
+              disabled={twoLines().length !== 2}
+              title="Redondea la esquina entre dos líneas que se tocan"
+              onClick={doFillet}
+            />
+            <ToolButton
+              icon="chamfer" label="Chaflán"
+              data-testid="mod-chamfer"
+              disabled={twoLines().length !== 2}
+              title="Corta la esquina entre dos líneas que se tocan"
+              onClick={doChamfer}
+            />
+            <ToolButton
               icon="symmetric" label="Simetría"
               data-testid="mod-mirror" disabled={selected.length < 2} onClick={doMirror}
               title="Seleccioná la geometría y, al final, la línea que hace de eje"
@@ -1168,7 +1201,10 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
             <div>Shift fija el trazo a la horizontal o la vertical</div>
           )}
           {tool === 'select' && (
-            <div>Ctrl para sumar a la selección</div>
+            <div>
+              Ctrl para sumar a la selección
+              {twoLines().length === 2 && ' · podés empalmar o achaflanar la esquina'}
+            </div>
           )}
           {tool === 'dimension' && !newDim && (
             <div style={{ color: '#c8a24a' }}>

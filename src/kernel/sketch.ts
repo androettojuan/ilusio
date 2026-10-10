@@ -38,6 +38,33 @@ const onCircle = (c: P2, r: number, a: number): P2 => ({
   y: c.y + r * Math.sin(a),
 });
 
+/**
+ * Ordena las primitivas como las necesita PlaneGCS: primero los puntos, después
+ * la geometría que los usa, y al final las restricciones.
+ *
+ * El solver resuelve las referencias a medida que recorre la lista, así que una
+ * línea que aparece antes que sus puntos falla con "sketch object not found".
+ * Editar el boceto puede dejar ese orden roto sin que se note (por ejemplo, el
+ * empalme reapunta líneas que ya estaban a puntos nuevos), así que conviene
+ * garantizarlo acá y no en cada función de edición.
+ */
+const GEOMETRY_TYPES = ['line', 'circle', 'arc', 'ellipse', 'arc_of_ellipse',
+  'parabola', 'arc_of_parabola', 'hyperbola', 'arc_of_hyperbola', 'bspline'];
+
+export function orderForSolver(primitives: SketchPrimitive[]): SketchPrimitive[] {
+  const rank = (p: SketchPrimitive) => {
+    const type = (p as { type: string }).type;
+    if (type === 'point') return 0;
+    if (GEOMETRY_TYPES.includes(type)) return 1;
+    return 2;
+  };
+  // Estable: dentro de cada grupo se respeta el orden original.
+  return primitives
+    .map((p, i) => ({ p, i, r: rank(p) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.p);
+}
+
 /** Resuelve las restricciones del boceto y devuelve la geometría ya ubicada. */
 export async function solveSketch(
   sketch: SketchFeature,
@@ -51,7 +78,9 @@ export async function solveSketch(
   }
   // Las curvas por puntos no van al solver: sólo sus puntos, que ya están en
   // la lista como primitivas normales.
-  const forSolver = sketch.primitives.filter((p) => !isSpline(p)) as SketchPrimitive[];
+  const forSolver = orderForSolver(
+    sketch.primitives.filter((p) => !isSpline(p)) as SketchPrimitive[],
+  );
   gcs.push_primitives_and_params(forSolver);
 
   const status = gcs.solve();

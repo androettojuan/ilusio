@@ -855,3 +855,199 @@ export function offsetSelection(
   if (made === 0) return { primitives, error: 'Esa geometría no se puede desfasar' };
   return { primitives: out };
 }
+
+// --------------------------------------------------------------------------
+// Empalme y chaflán en el boceto
+// --------------------------------------------------------------------------
+
+const sub = (a: XY, b: XY): XY => ({ x: a.x - b.x, y: a.y - b.y });
+const scale = (v: XY, k: number): XY => ({ x: v.x * k, y: v.y * k });
+const add = (a: XY, b: XY): XY => ({ x: a.x + b.x, y: a.y + b.y });
+const norm = (v: XY): XY => {
+  const l = Math.hypot(v.x, v.y) || 1;
+  return { x: v.x / l, y: v.y / l };
+};
+
+interface Corner {
+  /** Extremo de cada línea que forma la esquina. */
+  id1: string;
+  id2: string;
+  at: XY;
+  /** El otro extremo de cada línea. */
+  far1: XY;
+  far2: XY;
+}
+
+/** Dónde se tocan dos líneas, si es que se tocan. */
+function findCorner(
+  primitives: SketchItem[], positions: Map<string, XY>,
+  lineId1: string, lineId2: string,
+): Corner | null {
+  const l1 = findPrim(primitives, lineId1);
+  const l2 = findPrim(primitives, lineId2);
+  if (l1?.type !== 'line' || l2?.type !== 'line') return null;
+
+  const at = (id: string) => positions.get(id) ?? (() => {
+    const p = findPrim(primitives, id);
+    return { x: p?.x as number, y: p?.y as number };
+  })();
+
+  const ends1 = [l1.p1_id as string, l1.p2_id as string];
+  const ends2 = [l2.p1_id as string, l2.p2_id as string];
+
+  for (const a of ends1) {
+    for (const b of ends2) {
+      const pa = at(a), pb = at(b);
+      // Pueden ser el mismo punto o dos puntos unidos por coincidencia.
+      if (a !== b && Math.hypot(pa.x - pb.x, pa.y - pb.y) > 1e-6) continue;
+      return {
+        id1: a, id2: b, at: pa,
+        far1: at(ends1.find((x) => x !== a)!),
+        far2: at(ends2.find((x) => x !== b)!),
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Geometría de un empalme o chaflán entre dos líneas.
+ *
+ * `d` es cuánto hay que retroceder sobre cada línea desde la esquina. En un
+ * empalme sale del radio y del ángulo; en un chaflán lo elige el usuario.
+ */
+function cornerCut(corner: Corner, radius: number, chamfer: boolean) {
+  const u1 = norm(sub(corner.far1, corner.at));
+  const u2 = norm(sub(corner.far2, corner.at));
+
+  const cos = Math.max(-1, Math.min(1, u1.x * u2.x + u1.y * u2.y));
+  const theta = Math.acos(cos);
+  // Líneas alineadas o superpuestas: no hay esquina que cortar.
+  if (theta < 1e-6 || Math.PI - theta < 1e-6) return null;
+
+  const d = chamfer ? radius : radius / Math.tan(theta / 2);
+  const len1 = Math.hypot(corner.far1.x - corner.at.x, corner.far1.y - corner.at.y);
+  const len2 = Math.hypot(corner.far2.x - corner.at.x, corner.far2.y - corner.at.y);
+  if (d >= len1 || d >= len2) return null; // no entra
+
+  const t1 = add(corner.at, scale(u1, d));
+  const t2 = add(corner.at, scale(u2, d));
+  const center = chamfer
+    ? corner.at
+    : add(corner.at, scale(norm(add(u1, u2)), radius / Math.sin(theta / 2)));
+
+  return { t1, t2, center };
+}
+
+/**
+ * Redondea la esquina entre dos líneas.
+ *
+ * Las líneas se acortan hasta los puntos de tangencia y se mete un arco entre
+ * ellos. Quedan además las restricciones de tangencia y el radio, así que el
+ * empalme sigue siendo un empalme si después se mueven las líneas.
+ */
+export function filletLines(
+  primitives: SketchItem[], positions: Map<string, XY>,
+  lineId1: string, lineId2: string, radius: number,
+): ApplyResult {
+  if (radius <= 0) return { primitives, error: 'El radio tiene que ser mayor que cero' };
+
+  const corner = findCorner(primitives, positions, lineId1, lineId2);
+  if (!corner) return { primitives, error: 'Las dos líneas tienen que tocarse en un extremo' };
+
+  const cut = cornerCut(corner, radius, false);
+  if (!cut) return { primitives, error: 'El radio no entra en esa esquina' };
+
+  let out = [...primitives];
+  const newPoint = (at: XY) => {
+    const id = freshId(out, 'p');
+    out = [...out, { id, type: 'point', x: at.x, y: at.y, fixed: false }];
+    return id;
+  };
+
+  const p1 = newPoint(cut.t1);
+  const p2 = newPoint(cut.t2);
+  const c = newPoint(cut.center);
+
+  // Las líneas pasan a terminar en los puntos de tangencia.
+  out = out.map((p) => {
+    const prim = p as Prim;
+    if (prim.id !== lineId1 && prim.id !== lineId2) return p;
+    const nuevo = prim.id === lineId1 ? p1 : p2;
+    const viejo = prim.id === lineId1 ? corner.id1 : corner.id2;
+    return {
+      ...prim,
+      p1_id: prim.p1_id === viejo ? nuevo : prim.p1_id,
+      p2_id: prim.p2_id === viejo ? nuevo : prim.p2_id,
+    } as SketchItem;
+  });
+
+  // El arco va del punto de tangencia al otro por el lado corto.
+  const ang = (p: XY) => Math.atan2(p.y - cut.center.y, p.x - cut.center.x);
+  let a0 = ang(cut.t1), a1 = ang(cut.t2);
+  let span = a1 - a0;
+  while (span <= 0) span += 2 * Math.PI;
+  const [startId, endId] = span > Math.PI ? [p2, p1] : [p1, p2];
+  if (span > Math.PI) { const t = a0; a0 = a1; a1 = t; }
+
+  const arcId = freshId(out, 'a');
+  out = [...out, {
+    id: arcId, type: 'arc', c_id: c, radius,
+    start_id: startId, end_id: endId,
+    start_angle: ang(startId === p1 ? cut.t1 : cut.t2),
+    end_angle: ang(endId === p1 ? cut.t1 : cut.t2),
+  } as SketchItem];
+
+  // Tangencia y radio: sin esto el arco deja de empalmar en cuanto algo se mueve.
+  for (const lineId of [lineId1, lineId2]) {
+    out = [...out, {
+      id: freshId(out, 'c'), type: 'tangent_la', l_id: lineId, a_id: arcId,
+    } as SketchItem];
+  }
+  out = [...out, {
+    id: freshId(out, 'c'), type: 'arc_radius', a_id: arcId, radius,
+  } as SketchItem];
+
+  return { primitives: pruneOrphanPoints(out) };
+}
+
+/** Corta la esquina entre dos líneas con un tramo recto. */
+export function chamferLines(
+  primitives: SketchItem[], positions: Map<string, XY>,
+  lineId1: string, lineId2: string, distance: number,
+): ApplyResult {
+  if (distance <= 0) return { primitives, error: 'La distancia tiene que ser mayor que cero' };
+
+  const corner = findCorner(primitives, positions, lineId1, lineId2);
+  if (!corner) return { primitives, error: 'Las dos líneas tienen que tocarse en un extremo' };
+
+  const cut = cornerCut(corner, distance, true);
+  if (!cut) return { primitives, error: 'La distancia no entra en esa esquina' };
+
+  let out = [...primitives];
+  const newPoint = (at: XY) => {
+    const id = freshId(out, 'p');
+    out = [...out, { id, type: 'point', x: at.x, y: at.y, fixed: false }];
+    return id;
+  };
+  const p1 = newPoint(cut.t1);
+  const p2 = newPoint(cut.t2);
+
+  out = out.map((p) => {
+    const prim = p as Prim;
+    if (prim.id !== lineId1 && prim.id !== lineId2) return p;
+    const nuevo = prim.id === lineId1 ? p1 : p2;
+    const viejo = prim.id === lineId1 ? corner.id1 : corner.id2;
+    return {
+      ...prim,
+      p1_id: prim.p1_id === viejo ? nuevo : prim.p1_id,
+      p2_id: prim.p2_id === viejo ? nuevo : prim.p2_id,
+    } as SketchItem;
+  });
+
+  out = [...out, {
+    id: freshId(out, 'l'), type: 'line', p1_id: p1, p2_id: p2,
+  } as SketchItem];
+
+  return { primitives: pruneOrphanPoints(out) };
+}
