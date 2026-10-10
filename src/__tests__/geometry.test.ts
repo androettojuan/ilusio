@@ -987,3 +987,51 @@ describe('trazo ortogonal', () => {
     expect(orthogonal({ x: 10, y: 10 }, { x: -40, y: 5 })).toEqual({ x: -40, y: 10 });
   });
 });
+
+
+describe('enganche al punto medio', () => {
+  const tipo = (p: SketchItem) => (p as { type: string }).type;
+  const items: SketchItem[] = [
+    { id: 'a', type: 'point', x: 0, y: 0, fixed: false },
+    { id: 'b', type: 'point', x: 100, y: 0, fixed: false },
+    { id: 'l1', type: 'line', p1_id: 'a', p2_id: 'b' },
+  ] as SketchItem[];
+
+  it('crear un punto en el medio lo ata ahí, no sólo a la línea', () => {
+    const res = ensurePoint(items, { at: { x: 50, y: 0 }, midpointOf: 'l1' }, 1);
+    const sim = res.primitives.find((p) => tipo(p) === 'p2p_symmetric_ppp') as unknown as
+      { p1_id: string; p2_id: string; p_id: string } | undefined;
+    // A y B simétricos respecto del punto nuevo = el punto es el medio.
+    expect(sim).toMatchObject({ p1_id: 'a', p2_id: 'b', p_id: res.id });
+    // Y no se agrega además un "sobre la línea", que sería redundante.
+    expect(res.primitives.some((p) => tipo(p) === 'point_on_line_pl')).toBe(false);
+  });
+
+  it('soltar un punto arrastrado en el medio también lo ata', () => {
+    const conPunto: SketchItem[] = [
+      ...items, { id: 'p', type: 'point', x: 49, y: 2, fixed: false },
+    ] as SketchItem[];
+    const out = attachDraggedPoint(conPunto, 'p', { at: { x: 50, y: 0 }, midpointOf: 'l1' });
+    const sim = out.find((p) => tipo(p) === 'p2p_symmetric_ppp') as unknown as
+      { p_id: string } | undefined;
+    expect(sim?.p_id).toBe('p');
+  });
+
+  it('no duplica la atadura si ya estaba', () => {
+    const conPunto: SketchItem[] = [
+      ...items, { id: 'p', type: 'point', x: 50, y: 0, fixed: false },
+    ] as SketchItem[];
+    const una = attachDraggedPoint(conPunto, 'p', { at: { x: 50, y: 0 }, midpointOf: 'l1' });
+    const otra = attachDraggedPoint(una, 'p', { at: { x: 50, y: 0 }, midpointOf: 'l1' });
+    expect(otra.filter((p) => tipo(p) === 'p2p_symmetric_ppp')).toHaveLength(1);
+  });
+
+  it('un punto existente en el medio se reutiliza en vez de crear otro', () => {
+    const conPunto: SketchItem[] = [
+      ...items, { id: 'medio', type: 'point', x: 50, y: 0, fixed: false },
+    ] as SketchItem[];
+    const res = ensurePoint(conPunto, { at: { x: 50, y: 0 }, pointId: 'medio' }, 1);
+    expect(res.id).toBe('medio');
+    expect(res.primitives).toBe(conPunto);
+  });
+});

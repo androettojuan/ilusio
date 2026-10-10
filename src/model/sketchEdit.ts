@@ -63,6 +63,11 @@ export interface SnapTarget {
   curveId?: string;
   curveType?: 'line' | 'circle' | 'arc';
   /**
+   * Cayó sobre el punto medio de esta línea. El punto nuevo queda atado ahí
+   * con una restricción, así sigue siendo el medio aunque la línea cambie.
+   */
+  midpointOf?: string;
+  /**
    * Cayó sobre un vértice de la cuadrícula. Es sólo ayuda para dibujar: la
    * cuadrícula depende del zoom, así que atar el punto a ella con una
    * restricción sería atarlo a algo que cambia solo.
@@ -93,6 +98,18 @@ export function ensurePoint(
     ...primitives,
     { id, type: 'point', x: snap.at.x, y: snap.at.y, fixed: false },
   ];
+
+  if (snap.midpointOf) {
+    // "P es el punto medio de AB" = A y B simétricos respecto de P.
+    const line = findPrim(out, snap.midpointOf);
+    if (line?.type === 'line') {
+      out = [...out, {
+        id: freshId(out, 'c'), type: 'p2p_symmetric_ppp',
+        p1_id: line.p1_id as string, p2_id: line.p2_id as string, p_id: id,
+      } as SketchItem];
+    }
+    return { primitives: out, id };
+  }
 
   const rule = snap.curveId && snap.curveType ? ON_CURVE[snap.curveType] : undefined;
   if (rule && snap.curveId) {
@@ -443,6 +460,21 @@ export function attachDraggedPoint(
       id: freshId(primitives, 'c'), type: 'p2p_coincident',
       p1_id: pointId, p2_id: target,
     } as SketchItem];
+  }
+
+  if (snap.midpointOf) {
+    const line = findPrim(primitives, snap.midpointOf);
+    const dup = primitives.some((p) => {
+      const prim = p as Prim;
+      return prim.type === 'p2p_symmetric_ppp' && prim.p_id === pointId;
+    });
+    if (line?.type === 'line' && !dup) {
+      return [...primitives, {
+        id: freshId(primitives, 'c'), type: 'p2p_symmetric_ppp',
+        p1_id: line.p1_id as string, p2_id: line.p2_id as string, p_id: pointId,
+      } as SketchItem];
+    }
+    return primitives;
   }
 
   const rule = snap.curveId && snap.curveType ? ON_CURVE[snap.curveType] : undefined;

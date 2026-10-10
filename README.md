@@ -66,8 +66,9 @@ hay capa de traducción entre lo que se dibuja y lo que se resuelve.
 - **Boceto**: línea encadenada, **curva por puntos**, rectángulo, círculo, arco,
   polígono regular. Al dibujar se ve adónde va a caer el clic: cuadro amarillo
   si engancha con un punto existente (y lo reutiliza, cerrando el perfil), aspa
-  verde si cae sobre una curva (y queda restringido a ella), rombo azul si cae
-  sobre un vértice de la cuadrícula. La lectura de coordenadas muestra adónde
+  verde si cae sobre una curva (y queda restringido a ella), triángulo verde si
+  cae sobre el **punto medio** de una línea, rombo azul si cae sobre un vértice
+  de la cuadrícula. La lectura de coordenadas muestra adónde
   va a caer el clic, no dónde está el mouse. Un trazo termina solo al enganchar
   con geometría que ya estaba, así que no hace falta volver al primer punto
   para cerrar contra otra curva.
@@ -164,6 +165,10 @@ carga tarda unos segundos por el `.wasm` de OCCT.
   normales del boceto (arrastrables y restringibles) y la curva se recalcula a
   partir de ellos: en pantalla con una Catmull-Rom centrípeta, y en el sólido
   con `GeomAPI_PointsToBSpline`, que interpola con un error de ~1e-13.
+- **El punto medio deja restricción, no sólo posición.** Enganchar al medio y
+  que después la línea cambie dejaría el punto descentrado. Se guarda como "los
+  dos extremos son simétricos respecto de este punto", así sigue siendo el
+  medio aunque la línea se mueva, rote o cambie de largo.
 - **Un gesto es un paso de historial, no cien.** Arrastrar un punto dispara un
   cambio por cada movimiento del mouse; sin agruparlos, deshacer obliga a
   apretar Ctrl+Z una vez por píxel. `commit` recibe una clave de gesto y

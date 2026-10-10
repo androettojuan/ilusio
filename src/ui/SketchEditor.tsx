@@ -317,6 +317,16 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
     }
 
     if (solved) {
+      // El medio de una línea tiene prioridad sobre el resto de la línea: es
+      // donde uno quiere apoyarse para arrancar algo centrado.
+      for (const curve of solved.curves) {
+        if (curve.kind !== 'line') continue;
+        const m = { x: (curve.a.x + curve.b.x) / 2, y: (curve.a.y + curve.b.y) / 2 };
+        if (Math.hypot(m.x - at.x, m.y - at.y) <= snapRadius) {
+          return keepAxis({ at: m, midpointOf: curve.id });
+        }
+      }
+
       let best: { at: XY; id: string; d: number } | null = null;
       for (const curve of solved.curves) {
         const poly = curveToPolyline(curve, 64);
@@ -528,7 +538,11 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
       const out = attachDraggedPoint(sketch.primitives, dragging, snap);
       if (out !== sketch.primitives) {
         setPrimitives(out);
-        setMessage(snap.pointId ? 'Puntos unidos' : 'Punto apoyado en la curva');
+        setMessage(
+          snap.pointId ? 'Puntos unidos'
+            : snap.midpointOf ? 'Punto fijado al medio de la línea'
+              : 'Punto apoyado en la curva',
+        );
       }
     }
     setDragging(null);
@@ -968,14 +982,26 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
           {/* Marcador de enganche: dice adónde va a caer el clic */}
           {snap && (() => {
             const p = toScreen(snap.at);
-            const kind = snap.pointId ? 'point' : snap.curveId ? 'curve' : snap.onGrid ? 'grid' : 'free';
-            const color = { point: '#ffd45e', curve: '#7ee787', grid: '#9bb4ff', free: '#8d99a6' }[kind];
+            const kind = snap.pointId ? 'point'
+              : snap.midpointOf ? 'midpoint'
+                : snap.curveId ? 'curve'
+                  : snap.onGrid ? 'grid' : 'free';
+            const color = {
+              point: '#ffd45e', midpoint: '#7ee787', curve: '#7ee787',
+              grid: '#9bb4ff', free: '#8d99a6',
+            }[kind];
             return (
               <g data-testid="snap-marker" data-snap={kind} style={{ pointerEvents: 'none' }}>
                 {snap.pointId ? (
                   // Coincidente: cuadro sobre el punto que se va a reutilizar.
                   <rect
                     x={p.x - 7} y={p.y - 7} width={14} height={14}
+                    fill="none" stroke={color} strokeWidth={2}
+                  />
+                ) : snap.midpointOf ? (
+                  // Punto medio: triángulo, como en cualquier CAD.
+                  <path
+                    d={`M ${p.x} ${p.y - 7} L ${p.x + 7} ${p.y + 5} L ${p.x - 7} ${p.y + 5} Z`}
                     fill="none" stroke={color} strokeWidth={2}
                   />
                 ) : snap.curveId ? (
@@ -1135,6 +1161,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
             </div>
           )}
           {snap?.pointId && <div style={{ color: '#ffd45e' }}>coincide con un punto existente</div>}
+          {snap?.midpointOf && <div style={{ color: '#7ee787' }}>punto medio de la línea</div>}
           {snap?.curveId && <div style={{ color: '#7ee787' }}>queda sobre la curva</div>}
           {snap?.onGrid && <div style={{ color: '#9bb4ff' }}>vértice de la cuadrícula</div>}
           {pending.length > 0 && (
