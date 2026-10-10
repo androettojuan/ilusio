@@ -89,7 +89,8 @@ hay capa de traducción entre lo que se dibuja y lo que se resuelve.
 - **Selección por ventana**: arrastrando con el botón izquierdo sobre una zona
   vacía. De izquierda a derecha entra sólo lo que quede entero adentro (caja
   azul llena); de derecha a izquierda, todo lo que la ventana toque (caja verde
-  punteada). `Shift` suma a lo ya seleccionado y `Escape` cancela.
+  punteada). `Ctrl` suma a lo ya seleccionado y `Escape` cancela.
+- **`Shift` fija el trazo** a la horizontal o la vertical mientras dibujás.
 - **Modificar boceto**: simetría (deja la restricción puesta, no es una copia
   muerta), patrón rectangular, patrón circular, desfase, recortar (también
   sobre curvas por puntos), borrar. Al borrar geometría se van también los
@@ -163,6 +164,15 @@ carga tarda unos segundos por el `.wasm` de OCCT.
   normales del boceto (arrastrables y restringibles) y la curva se recalcula a
   partir de ellos: en pantalla con una Catmull-Rom centrípeta, y en el sólido
   con `GeomAPI_PointsToBSpline`, que interpola con un error de ~1e-13.
+- **Un gesto es un paso de historial, no cien.** Arrastrar un punto dispara un
+  cambio por cada movimiento del mouse; sin agruparlos, deshacer obliga a
+  apretar Ctrl+Z una vez por píxel. `commit` recibe una clave de gesto y
+  reemplaza el estado en vez de apilar mientras la clave no cambie.
+- **`Ctrl` suma a la selección, no `Shift`.** Shift queda libre para fijar el
+  trazo a un eje, que es para lo que se usa mientras se dibuja.
+- **Con Shift, el enganche no puede sacar el trazo del eje.** Si engancharía
+  fuera, se respeta la posición sobre el eje y se pierde la restricción que
+  habría agregado: lo que el usuario pidió explícitamente manda.
 - **Los puntos se agarran donde se ven, no donde están guardados.** Las
   coordenadas de una primitiva son la semilla del solver; en cuanto hay
   restricciones dejan de coincidir con el resultado. Buscar contra la semilla

@@ -908,3 +908,82 @@ describe('agarrar puntos', () => {
     expect(snapPoint(items, { x: 0, y: 0 }, 3, resuelto)).toBeNull();
   });
 });
+
+
+describe('agrupado del historial', () => {
+  /** Mini-réplica de la lógica de `commit`, que es donde vive el agrupado. */
+  const makeHistory = () => {
+    let past: string[] = [];
+    let doc = 'inicial';
+    let lastKey: string | undefined;
+    return {
+      commit(next: string, key?: string) {
+        const sameGesture = key !== undefined && key === lastKey;
+        lastKey = key;
+        if (!sameGesture) past = [...past, doc];
+        doc = next;
+      },
+      end() { lastKey = undefined; },
+      undo() { doc = past[past.length - 1]; past = past.slice(0, -1); },
+      get doc() { return doc; },
+      get steps() { return past.length; },
+    };
+  };
+
+  it('un arrastre entero es un solo paso', () => {
+    const h = makeHistory();
+    for (let i = 1; i <= 20; i++) h.commit(`pos${i}`, 'mover:p1');
+    expect(h.steps).toBe(1);
+    h.undo();
+    expect(h.doc).toBe('inicial');
+  });
+
+  it('dos gestos distintos son dos pasos', () => {
+    const h = makeHistory();
+    h.commit('a', 'mover:p1');
+    h.commit('b', 'mover:p1');
+    h.commit('c', 'mover:p2');
+    h.commit('d', 'mover:p2');
+    expect(h.steps).toBe(2);
+  });
+
+  it('cerrar el gesto abre un paso nuevo aunque la clave se repita', () => {
+    const h = makeHistory();
+    h.commit('a', 'campo');
+    h.end();
+    h.commit('b', 'campo');
+    expect(h.steps).toBe(2);
+  });
+
+  it('sin clave, cada cambio es su propio paso', () => {
+    const h = makeHistory();
+    h.commit('a');
+    h.commit('b');
+    h.commit('c');
+    expect(h.steps).toBe(3);
+  });
+});
+
+describe('trazo ortogonal', () => {
+  /** Misma proyección que usa el editor con Shift apretado. */
+  const orthogonal = (from: { x: number; y: number }, to: { x: number; y: number }) =>
+    Math.abs(to.x - from.x) >= Math.abs(to.y - from.y)
+      ? { x: to.x, y: from.y }
+      : { x: from.x, y: to.y };
+
+  it('más horizontal que vertical: fija la y', () => {
+    expect(orthogonal({ x: 0, y: 0 }, { x: 50, y: 12 })).toEqual({ x: 50, y: 0 });
+  });
+
+  it('más vertical que horizontal: fija la x', () => {
+    expect(orthogonal({ x: 0, y: 0 }, { x: 12, y: 50 })).toEqual({ x: 0, y: 50 });
+  });
+
+  it('en la diagonal exacta elige la horizontal', () => {
+    expect(orthogonal({ x: 0, y: 0 }, { x: 30, y: 30 })).toEqual({ x: 30, y: 0 });
+  });
+
+  it('respeta el signo', () => {
+    expect(orthogonal({ x: 10, y: 10 }, { x: -40, y: 5 })).toEqual({ x: -40, y: 10 });
+  });
+});

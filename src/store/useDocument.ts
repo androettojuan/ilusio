@@ -51,7 +51,14 @@ interface State {
   captureThumbnail: (() => string | null) | null;
   saveState: 'idle' | 'saving' | 'saved' | 'error';
 
-  commit: (next: DesignDocument) => void;
+  /**
+   * Guarda un cambio. `coalesceKey` agrupa los cambios seguidos del mismo
+   * gesto en un solo paso de historial: arrastrar un punto o tipear en un
+   * campo dispara decenas de cambios, y deshacerlos de a uno es inusable.
+   */
+  commit: (next: DesignDocument, coalesceKey?: string) => void;
+  /** Cierra el gesto en curso: el próximo cambio abre un paso nuevo. */
+  endCoalesce: () => void;
   undo: () => void;
   redo: () => void;
   load: (doc: DesignDocument) => void;
@@ -63,7 +70,7 @@ interface State {
   revolveFrom: (sketchId: string) => void;
   addFillet: () => void;
   addChamfer: () => void;
-  patchFeature: (id: string, patch: Partial<Feature>) => void;
+  patchFeature: (id: string, patch: Partial<Feature>, coalesceKey?: string) => void;
   /** Borra un feature; con `cascade`, también los que dependían de él. */
   deleteFeature: (id: string, cascade?: boolean) => void;
   /** Pide confirmación antes de borrar (el diálogo lo muestra App). */
@@ -74,7 +81,7 @@ interface State {
   toggleVisible: (id: string) => void;
 
   addCanvas: (name: string, src: string, plane: PlaneId) => void;
-  patchCanvas: (id: string, patch: Partial<Canvas>) => void;
+  patchCanvas: (id: string, patch: Partial<Canvas>, coalesceKey?: string) => void;
   removeCanvasById: (id: string) => void;
 
   editSketch: (id: string | null) => void;
@@ -98,6 +105,9 @@ interface State {
 let pending = false;
 let running = false;
 
+/** Gesto al que pertenece el último cambio, para no inflar el historial. */
+let lastCoalesceKey: string | undefined;
+
 /** Autoguardado con rebote: no tiene sentido escribir en cada tecla. */
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 const AUTOSAVE_MS = 1200;
@@ -109,8 +119,8 @@ export const useDocument = create<State>((set, get) => {
     saveTimer = setTimeout(() => { void get().saveNow(); }, AUTOSAVE_MS);
   };
 
-  const apply = (fn: (d: DesignDocument) => DesignDocument) => {
-    get().commit(fn(get().doc));
+  const apply = (fn: (d: DesignDocument) => DesignDocument, coalesceKey?: string) => {
+    get().commit(fn(get().doc), coalesceKey);
   };
 
   return {
@@ -120,16 +130,25 @@ export const useDocument = create<State>((set, get) => {
     activePlane: { kind: 'base', plane: 'XY' }, pendingFeatureId: null,
     captureThumbnail: null, saveState: 'idle',
 
-    commit: (next) => {
-      set((s) => ({
-        past: [...s.past, s.doc].slice(-MAX_HISTORY),
-        doc: next,
-        future: [],
-      }));
+    commit: (next, coalesceKey) => {
+      set((s) => {
+        // Mismo gesto que el cambio anterior: se reemplaza el estado actual y
+        // el punto de deshacer sigue siendo el de antes de empezar el gesto.
+        const sameGesture = coalesceKey !== undefined && coalesceKey === lastCoalesceKey;
+        lastCoalesceKey = coalesceKey;
+        return {
+          past: sameGesture ? s.past : [...s.past, s.doc].slice(-MAX_HISTORY),
+          doc: next,
+          future: [],
+        };
+      });
       schedule();
     },
 
+    endCoalesce: () => { lastCoalesceKey = undefined; },
+
     undo: () => {
+      lastCoalesceKey = undefined;
       const { past, doc, future } = get();
       if (past.length === 0) return;
       set({ past: past.slice(0, -1), doc: past[past.length - 1], future: [doc, ...future] });
@@ -137,6 +156,7 @@ export const useDocument = create<State>((set, get) => {
     },
 
     redo: () => {
+      lastCoalesceKey = undefined;
       const { past, doc, future } = get();
       if (future.length === 0) return;
       set({ past: [...past, doc], doc: future[0], future: future.slice(1) });
@@ -196,7 +216,8 @@ export const useDocument = create<State>((set, get) => {
       set({ selection: { kind: 'feature', id: f.id }, pendingFeatureId: f.id });
     },
 
-    patchFeature: (id, patch) => apply((d) => updateFeature(d, id, patch)),
+    patchFeature: (id, patch, coalesceKey) =>
+      apply((d) => updateFeature(d, id, patch), coalesceKey),
     requestDelete: (id) => set({ deleteRequest: id }),
     cancelDelete: () => set({ deleteRequest: null }),
 
@@ -227,7 +248,8 @@ export const useDocument = create<State>((set, get) => {
       apply((d) => ({ ...d, canvases: [...d.canvases, c] }));
       set({ selection: { kind: 'canvas', id: c.id } });
     },
-    patchCanvas: (id, patch) => apply((d) => updateCanvas(d, id, patch)),
+    patchCanvas: (id, patch, coalesceKey) =>
+      apply((d) => updateCanvas(d, id, patch), coalesceKey),
     removeCanvasById: (id) =>
       apply((d) => ({ ...d, canvases: d.canvases.filter((c) => c.id !== id) })),
 
@@ -236,7 +258,7 @@ export const useDocument = create<State>((set, get) => {
     requestFit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),
     setActivePlane: (activePlane) => set({ activePlane }),
     setThumbnailSource: (captureThumbnail) => set({ captureThumbnail }),
-    rename: (name) => apply((d) => ({ ...d, name })),
+    rename: (name) => apply((d) => ({ ...d, name }), 'rename'),
 
     saveNow: async () => {
       const { doc, captureThumbnail } = get();

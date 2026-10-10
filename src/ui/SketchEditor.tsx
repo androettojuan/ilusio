@@ -47,6 +47,19 @@ const TOOLS: { id: Tool; label: string; key: string; icon: IconName }[] = [
   { id: 'trim', label: 'Recortar', key: 'T', icon: 'trim' },
 ];
 
+/**
+ * Ctrl (Cmd en Mac) suma a la selección. Shift no: queda reservado para forzar
+ * el trazo a horizontal o vertical mientras se dibuja.
+ */
+const addsToSelection = (e: { ctrlKey: boolean; metaKey: boolean }) => e.ctrlKey || e.metaKey;
+
+/** Proyecta `to` sobre el eje horizontal o vertical que pase por `from`. */
+function orthogonal(from: XY, to: XY): XY {
+  return Math.abs(to.x - from.x) >= Math.abs(to.y - from.y)
+    ? { x: to.x, y: from.y }
+    : { x: from.x, y: to.y };
+}
+
 /** Lee un número del usuario, devolviendo null si cancela o no es válido. */
 function askNumber(label: string, suggested: number): number | null {
   const raw = window.prompt(label, String(suggested));
@@ -59,7 +72,7 @@ interface View { cx: number; cy: number; scale: number }
 
 export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const { patchFeature, editSketch } = useDocument();
+  const { patchFeature, editSketch, endCoalesce } = useDocument();
   const canvases = useDocument((s) => s.doc.canvases);
   const parameters = useDocument((s) => s.doc.parameters);
 
@@ -150,8 +163,13 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
   /** Radio de enganche en unidades del boceto: 10 px en pantalla. */
   const snapRadius = 10 / view.scale;
 
-  const setPrimitives = (primitives: SketchFeature['primitives']) =>
-    patchFeature(sketch.id, { primitives });
+  /**
+   * `gesture` agrupa en un solo paso de historial todos los cambios de un
+   * mismo arrastre: si no, deshacer un movimiento obliga a apretar Ctrl+Z
+   * una vez por cada píxel que se movió el mouse.
+   */
+  const setPrimitives = (primitives: SketchFeature['primitives'], gesture?: string) =>
+    patchFeature(sketch.id, { primitives }, gesture);
 
   // --- Herramientas ---
   /** Cierra la curva por puntos que se está dibujando. */
@@ -274,15 +292,28 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
    * Se calcula en cada movimiento del mouse y se dibuja, así se ve antes de
    * hacer clic si el trazo va a cerrar contra algo o va a quedar suelto.
    */
-  const computeSnap = (at: XY, exclude?: string): SnapTarget => {
+  const computeSnap = (at: XY, exclude?: string, axisFrom?: XY): SnapTarget => {
+    /**
+     * Con Shift el trazo está fijado a un eje. Un enganche que lo saque de ahí
+     * contradice lo que el usuario pidió, así que se descarta: se respeta la
+     * posición sobre el eje y se pierde la restricción que habría agregado.
+     */
+    const keepAxis = (t: SnapTarget): SnapTarget => {
+      if (!axisFrom) return t;
+      const onAxis = orthogonal(axisFrom, t.at);
+      return Math.hypot(onAxis.x - t.at.x, onAxis.y - t.at.y) < 1e-9
+        ? t
+        : { at: onAxis };
+    };
+
     const pointId = snapPoint(sketch.primitives, at, snapRadius, solved?.points);
     if (pointId && pointId !== exclude) {
       const p = findPrim(sketch.primitives, pointId);
       const solvedPoint = solved?.points.get(pointId);
-      return {
+      return keepAxis({
         at: solvedPoint ?? { x: p?.x as number, y: p?.y as number },
         pointId,
-      };
+      });
     }
 
     if (solved) {
@@ -299,11 +330,11 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
       if (best) {
         const kind = primType(sketch.primitives, best.id);
         if (kind === 'line' || kind === 'circle' || kind === 'arc') {
-          return { at: best.at, curveId: best.id, curveType: kind };
+          return keepAxis({ at: best.at, curveId: best.id, curveType: kind });
         }
         // Sobre una curva por puntos sólo enganchamos la posición: PlaneGCS no
         // la conoce, así que no hay restricción que poner.
-        return { at: best.at };
+        return keepAxis({ at: best.at });
       }
     }
 
@@ -311,7 +342,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
     // la geometría que ya existe siempre manda sobre el fondo.
     if (snapGrid) {
       const g = snapToGrid(at, gridStep(view.scale), snapRadius);
-      if (g) return { at: g, onGrid: true };
+      if (g) return keepAxis({ at: g, onGrid: true });
     }
 
     return freeSnap(at);
@@ -334,9 +365,23 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
     return best;
   };
 
+  /**
+   * Punto del boceto bajo el puntero. Con Shift apretado y un trazo empezado,
+   * se fuerza a la horizontal o la vertical desde el punto anterior.
+   */
+  const pointerAt = (e: { clientX: number; clientY: number; shiftKey: boolean }): XY => {
+    const at = toSketch(e.clientX, e.clientY);
+    const from = axisFrom(e);
+    return from ? orthogonal(from, at) : at;
+  };
+
+  /** Punto desde el que Shift fija el eje, si corresponde. */
+  const axisFrom = (e: { shiftKey: boolean }): XY | undefined =>
+    e.shiftKey ? pending[pending.length - 1]?.at : undefined;
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button === 1 || e.button === 2) return; // pan/menú
-    const at = toSketch(e.clientX, e.clientY);
+    const at = pointerAt(e);
 
     if (tool === 'dimension') {
       const hit = pick(at);
@@ -382,7 +427,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
       return;
     }
 
-    if (tool !== 'select') { commitTool(computeSnap(at)); return; }
+    if (tool !== 'select') { commitTool(computeSnap(at, undefined, axisFrom(e))); return; }
 
     const hit = pick(at);
     if (!hit) {
@@ -393,7 +438,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
       return;
     }
     setSelected((prev) =>
-      e.shiftKey
+      addsToSelection(e)
         ? (prev.includes(hit) ? prev.filter((x) => x !== hit) : [...prev, hit])
         : [hit]);
     if (primType(sketch.primitives, hit) === 'point') {
@@ -403,7 +448,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    const at = toSketch(e.clientX, e.clientY);
+    const at = pointerAt(e);
     setCursor(at);
     if (e.buttons === 4 || (e.buttons === 1 && e.altKey)) {
       setView((v) => ({
@@ -425,7 +470,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
               dim.offset.y - e.movementY / view.scale,
             ],
           },
-        });
+        }, `cota:${dragLabel}`);
       }
       return;
     }
@@ -434,7 +479,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
       // Arrastrar un punto también engancha, sin contarse a sí mismo.
       const target = computeSnap(at, dragging);
       setSnap(target);
-      setPrimitives(movePoint(sketch.primitives, dragging, target.at));
+      setPrimitives(movePoint(sketch.primitives, dragging, target.at), `mover:${dragging}`);
       return;
     }
 
@@ -448,7 +493,8 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
    * Convención de CAD: arrastrar hacia la derecha selecciona sólo lo que queda
    * entero adentro; hacia la izquierda, todo lo que la ventana toque.
    */
-  const finishBox = (add: boolean) => {
+  const finishBox = (e: { ctrlKey: boolean; metaKey: boolean }) => {
+    const add = addsToSelection(e);
     const current = boxRef.current;
     if (!current) return;
     putBox(null);
@@ -803,9 +849,10 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={(e) => {
-            finishBox(e.shiftKey);
+            finishBox(e);
             releaseDrag();
             setDragLabel(null);
+            endCoalesce();
           }}
           onDoubleClick={() => {
             if (tool === 'spline') finishSpline(false);
@@ -872,7 +919,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
               onPick={(e) => {
                 e.stopPropagation();
                 setSelected((prev) =>
-                  e.shiftKey
+                  addsToSelection(e)
                     ? (prev.includes(dim.id) ? prev.filter((x) => x !== dim.id) : [...prev, dim.id])
                     : [dim.id]);
                 setDragLabel(dim.id);
@@ -1090,6 +1137,12 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
           {snap?.pointId && <div style={{ color: '#ffd45e' }}>coincide con un punto existente</div>}
           {snap?.curveId && <div style={{ color: '#7ee787' }}>queda sobre la curva</div>}
           {snap?.onGrid && <div style={{ color: '#9bb4ff' }}>vértice de la cuadrícula</div>}
+          {pending.length > 0 && (
+            <div>Shift fija el trazo a la horizontal o la vertical</div>
+          )}
+          {tool === 'select' && (
+            <div>Ctrl para sumar a la selección</div>
+          )}
           {tool === 'dimension' && !newDim && (
             <div style={{ color: '#c8a24a' }}>
               {dimPicks.length === 0

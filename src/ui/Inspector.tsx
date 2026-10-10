@@ -9,6 +9,7 @@ function Num({ label, value, onChange, step = 1, min, autoFocus, onEnter }: {
   label: string; value: number; onChange: (v: number) => void;
   step?: number; min?: number; autoFocus?: boolean; onEnter?: () => void;
 }) {
+  const endCoalesce = useDocument((s) => s.endCoalesce);
   return (
     <div className="field">
       <label>{label}</label>
@@ -18,7 +19,10 @@ function Num({ label, value, onChange, step = 1, min, autoFocus, onEnter }: {
         data-testid={`field-${label}`}
         onFocus={(e) => autoFocus && e.target.select()}
         onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) onChange(v); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') onEnter?.(); }}
+        // Al salir del campo se cierra el paso: escribir "25" son dos cambios,
+        // pero deshacer tiene que volver al valor que había antes de empezar.
+        onBlur={endCoalesce}
+        onKeyDown={(e) => { if (e.key === 'Enter') { endCoalesce(); onEnter?.(); } }}
       />
     </div>
   );
@@ -403,7 +407,7 @@ export default function Inspector() {
         <label>Nombre</label>
         <input
           type="text" value={f.name}
-          onChange={(e) => patchFeature(f.id, { name: e.target.value })}
+          onChange={(e) => patchFeature(f.id, { name: e.target.value }, `nombre:${f.id}`)}
         />
       </div>
 
@@ -411,7 +415,7 @@ export default function Inspector() {
 
       <FeatureForm
         f={f}
-        patch={(p) => patchFeature(f.id, p)}
+        patch={(p) => patchFeature(f.id, p, `insp:${f.id}:${Object.keys(p).join(',')}`)}
         pending={pending}
         accept={acceptPending}
       />
