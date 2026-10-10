@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useDocument } from '../store/useDocument';
-import { FEATURE_GLYPH } from './icons';
+import { FeatureIcon } from './icons';
 import { useFeatureMenu } from './useFeatureMenu';
 
 /**
@@ -92,7 +92,7 @@ export default function Timeline() {
                 onContextMenu={menu.onContextMenu(f)}
                 title={st?.error ?? `${f.name} · ${st ? `${st.ms.toFixed(0)} ms` : 'sin ejecutar'} · clic derecho para más`}
               >
-                <span className="glyph">{FEATURE_GLYPH[f.type]}</span>
+                <span className="glyph"><FeatureIcon type={f.type} /></span>
                 {f.name}
               </div>
             </span>

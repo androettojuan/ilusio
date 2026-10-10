@@ -5,6 +5,7 @@ import PlanePicker from './PlanePicker';
 import { importSvg } from '../io/svg';
 import { downloadModel } from '../io/exportFile';
 import Gallery from './Gallery';
+import { ToolButton } from './ToolIcons';
 
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -78,9 +79,7 @@ export default function Ribbon() {
           data-testid="doc-name"
           onChange={(e) => rename(e.target.value)}
         />
-        <button data-testid="btn-gallery" onClick={() => setGalleryOpen(true)}>
-          Mis diseños
-        </button>
+        <ToolButton icon="gallery" label="Mis diseños" data-testid="btn-gallery" onClick={() => setGalleryOpen(true)} />
       </Group>
       <Group label="Plano activo">
         <PlanePicker
@@ -89,35 +88,38 @@ export default function Ribbon() {
           data-testid="plane-select"
           style={{ width: 160 }}
         />
-        <button
+        <ToolButton
+          icon="plane" label="Plano"
           data-testid="btn-plane"
           title="Plano de construcción desfasado del plano activo"
           onClick={() => newPlane(plane)}
-        >▱ Plano</button>
+        />
       </Group>
 
       <Group label="Crear">
-        <button data-testid="btn-sketch" onClick={() => newSketch(plane)}>✎ Boceto</button>
-        <button
+        <ToolButton icon="sketch" label="Boceto" data-testid="btn-sketch" onClick={() => newSketch(plane)} />
+        <ToolButton
+          icon="extrude" label="Extruir"
           data-testid="btn-extrude"
           disabled={!targetSketch}
           onClick={() => targetSketch && extrudeFrom(targetSketch)}
-        >⬒ Extruir</button>
-        <button
+        />
+        <ToolButton
+          icon="revolve" label="Revolución"
           data-testid="btn-revolve"
           disabled={!targetSketch}
           onClick={() => targetSketch && revolveFrom(targetSketch)}
-        >◗ Revolución</button>
+        />
       </Group>
 
       <Group label="Modificar">
-        <button data-testid="btn-fillet" onClick={addFillet}>◜ Empalme</button>
-        <button data-testid="btn-chamfer" onClick={addChamfer}>◺ Chaflán</button>
+        <ToolButton icon="fillet" label="Empalme" data-testid="btn-fillet" onClick={addFillet} />
+        <ToolButton icon="chamfer" label="Chaflán" data-testid="btn-chamfer" onClick={addChamfer} />
       </Group>
 
       <Group label="Insertar">
-        <button onClick={() => imageInput.current?.click()}>▤ Lienzo</button>
-        <button onClick={() => svgInput.current?.click()}>SVG</button>
+        <ToolButton icon="canvas" label="Lienzo" onClick={() => imageInput.current?.click()} />
+        <ToolButton icon="svg" label="SVG" onClick={() => svgInput.current?.click()} />
         <input
           ref={imageInput} type="file" accept="image/*" hidden
           onChange={(e) => e.target.files?.[0] && onImage(e.target.files[0])}
@@ -129,28 +131,28 @@ export default function Ribbon() {
       </Group>
 
       <Group label="Exportar">
-        <button disabled={!result?.bodies.length || busy !== null} onClick={() => onExport('step')}>
-          {busy === 'step' ? '…' : 'STEP'}
-        </button>
-        <button disabled={!result?.bodies.length || busy !== null} onClick={() => onExport('stl')}>
-          {busy === 'stl' ? '…' : 'STL'}
-        </button>
+        <ToolButton
+          icon="download" label={busy === 'step' ? '…' : 'STEP'}
+          disabled={!result?.bodies.length || busy !== null} onClick={() => onExport('step')}
+        />
+        <ToolButton
+          icon="download" label={busy === 'stl' ? '…' : 'STL'}
+          disabled={!result?.bodies.length || busy !== null} onClick={() => onExport('stl')}
+        />
       </Group>
 
       <Group label="Vista">
-        <button onClick={requestFit} title="Encuadrar todo (F)">⤢ Encuadrar</button>
+        <ToolButton icon="fit" label="Encuadrar" onClick={requestFit} title="Encuadrar todo (F)" />
       </Group>
 
       <Group label="Edición">
-        <button onClick={undo} disabled={past === 0} title="Deshacer (Ctrl+Z)">↶</button>
-        <button onClick={redo} disabled={future === 0} title="Rehacer (Ctrl+Y)">↷</button>
+        <ToolButton icon="undo" label="" onClick={undo} disabled={past === 0} title="Deshacer (Ctrl+Z)" />
+        <ToolButton icon="redo" label="" onClick={redo} disabled={future === 0} title="Rehacer (Ctrl+Y)" />
       </Group>
 
       {editing && (
         <Group label="Boceto">
-          <button className="active" onClick={() => editSketch(null)}>
-            Terminar boceto
-          </button>
+          <ToolButton icon="check" label="Terminar boceto" className="active" onClick={() => editSketch(null)} />
         </Group>
       )}
 

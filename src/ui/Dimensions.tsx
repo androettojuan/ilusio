@@ -33,7 +33,7 @@ function arrow(at: P2, dir: P2, color: string) {
  * grosor de las líneas, las flechas y el texto no cambian con el zoom.
  */
 export default function DimensionGlyph({
-  dim, a, b, vertex, label, selected, onPick, onEdit,
+  dim, a, b, vertex, label, selected, preview, onPick, onEdit,
 }: {
   dim: Dimension;
   a: P2;
@@ -41,10 +41,12 @@ export default function DimensionGlyph({
   vertex?: P2;
   label: P2;
   selected: boolean;
+  /** Todavía no está confirmada: se dibuja en verde y no recibe clics. */
+  preview?: boolean;
   onPick: (e: React.PointerEvent) => void;
   onEdit: () => void;
 }) {
-  const color = selected ? 'var(--accent)' : '#c8a24a';
+  const color = preview ? '#8ed14f' : selected ? 'var(--accent)' : '#c8a24a';
   const dir = norm(sub(b, a));
   const perp = { x: -dir.y, y: dir.x };
 
@@ -98,11 +100,25 @@ export default function DimensionGlyph({
     const off = { x: perp.x * gap, y: perp.y * gap };
     const a2 = { x: a.x + off.x, y: a.y + off.y };
     const b2 = { x: b.x + off.x, y: b.y + off.y };
+    // El texto corta la línea de cota en dos tramos en vez de taparla.
+    const half = dim.text.length * 4 + 6;
+    const t = ((label.x - a2.x) * dir.x + (label.y - a2.y) * dir.y);
+    const cutA = { x: a2.x + dir.x * (t - half), y: a2.y + dir.y * (t - half) };
+    const cutB = { x: a2.x + dir.x * (t + half), y: a2.y + dir.y * (t + half) };
+    const splits = t > half && t < Math.hypot(b2.x - a2.x, b2.y - a2.y) - half;
+
     return (
       <>
         <line x1={a.x} y1={a.y} x2={a2.x} y2={a2.y} stroke={color} strokeWidth={0.7} opacity={0.6} />
         <line x1={b.x} y1={b.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={0.7} opacity={0.6} />
-        <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={1} />
+        {splits ? (
+          <>
+            <line x1={a2.x} y1={a2.y} x2={cutA.x} y2={cutA.y} stroke={color} strokeWidth={1} />
+            <line x1={cutB.x} y1={cutB.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={1} />
+          </>
+        ) : (
+          <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={1} />
+        )}
         {arrow(a2, { x: -dir.x, y: -dir.y }, color)}
         {arrow(b2, dir, color)}
       </>
@@ -117,8 +133,9 @@ export default function DimensionGlyph({
         x={label.x - dim.text.length * 4 - 5} y={label.y - 9}
         width={dim.text.length * 8 + 10} height={18}
         rx={3}
-        fill="rgba(20,24,28,0.88)"
-        stroke={selected ? 'var(--accent)' : 'transparent'}
+        fill="none"
+        stroke={selected && !preview ? 'var(--accent)' : 'transparent'}
+        pointerEvents={preview ? 'none' : 'all'}
         style={{ cursor: 'pointer' }}
         onPointerDown={onPick}
         onDoubleClick={onEdit}
@@ -126,6 +143,7 @@ export default function DimensionGlyph({
       <text
         x={label.x} y={label.y + 4}
         textAnchor="middle" fontSize={12} fill={color}
+        pointerEvents={preview ? 'none' : 'all'}
         style={{ cursor: 'pointer', userSelect: 'none' }}
         onPointerDown={onPick}
         onDoubleClick={onEdit}

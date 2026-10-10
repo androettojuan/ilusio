@@ -13,10 +13,11 @@ import {
 } from '../model/sketchEdit';
 import { rectFrom, selectInBox } from '../model/boxSelect';
 import {
-  collectDimensions, inferDimension, setDimensionValue,
-  type InferredDimension,
+  collectDimensions, dimensionText, inferDimension, previewDimension,
+  setDimensionValue, type InferredDimension,
 } from '../model/dimensions';
 import DimensionGlyph from './Dimensions';
+import { ToolButton, type IconName } from './ToolIcons';
 import { gridStep, snapToGrid } from '../model/grid';
 import { trimAt } from '../model/sketchTrim';
 import type { SketchFeature } from '../model/types';
@@ -34,16 +35,16 @@ type Tool =
   | 'select' | 'line' | 'rect' | 'circle' | 'arc' | 'polygon' | 'spline'
   | 'dimension' | 'trim';
 
-const TOOLS: { id: Tool; label: string; key: string }[] = [
-  { id: 'select', label: 'Seleccionar', key: 'Esc' },
-  { id: 'line', label: 'Línea', key: 'L' },
-  { id: 'spline', label: 'Curva por puntos', key: 'S' },
-  { id: 'rect', label: 'Rectángulo', key: 'R' },
-  { id: 'circle', label: 'Círculo', key: 'C' },
-  { id: 'arc', label: 'Arco', key: 'A' },
-  { id: 'polygon', label: 'Polígono', key: 'P' },
-  { id: 'dimension', label: 'Cota', key: 'D' },
-  { id: 'trim', label: 'Recortar', key: 'T' },
+const TOOLS: { id: Tool; label: string; key: string; icon: IconName }[] = [
+  { id: 'select', label: 'Seleccionar', key: 'Esc', icon: 'select' },
+  { id: 'line', label: 'Línea', key: 'L', icon: 'line' },
+  { id: 'spline', label: 'Curva por puntos', key: 'S', icon: 'spline' },
+  { id: 'rect', label: 'Rectángulo', key: 'R', icon: 'rect' },
+  { id: 'circle', label: 'Círculo', key: 'C', icon: 'circle' },
+  { id: 'arc', label: 'Arco', key: 'A', icon: 'arc' },
+  { id: 'polygon', label: 'Polígono', key: 'P', icon: 'polygon' },
+  { id: 'dimension', label: 'Cota', key: 'D', icon: 'dimension' },
+  { id: 'trim', label: 'Recortar', key: 'T', icon: 'trim' },
 ];
 
 /** Lee un número del usuario, devolviendo null si cancela o no es válido. */
@@ -87,6 +88,11 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
   const [snapGrid, setSnapGrid] = useState(true);
   /** Cota cuyo valor se está escribiendo. */
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+  /**
+   * Medida tipeada mientras se dibuja. `null` = sigue al mouse; un texto = el
+   * usuario la fijó y al confirmar manda ese valor.
+   */
+  const [draft, setDraft] = useState<string | null>(null);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   /** Geometría elegida con la herramienta de cota, todavía sin ubicar. */
   const [dimPicks, setDimPicks] = useState<string[]>([]);
@@ -343,8 +349,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
         setSelected(next);
         const res = inferDimension(sketch.primitives, solved!, next);
         setMessage(res.status === 'invalid' ? res.message
-          : res.status === 'need-more' ? res.hint
-            : 'Hacé clic donde querés ubicar la cota');
+          : res.status === 'need-more' ? res.hint : null);
         return;
       }
 
@@ -531,7 +536,7 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
       }
       else if (e.key === 'Escape') {
         setTool('select'); setPending([]); setSelected([]); setSnap(null);
-        putBox(null); setDimPicks([]); setNewDim(null);
+        putBox(null); setDimPicks([]); setNewDim(null); setDraft(null);
       }
       else if (k === 'l') setTool('line');
       else if (k === 'r') setTool('rect');
@@ -557,6 +562,18 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
   const gridLines = useMemo(() => buildGrid(view, size), [view, size]);
   const points = getPoints(sketch.primitives);
   const orphans = useMemo(() => orphanPoints(sketch.primitives), [sketch.primitives]);
+  /**
+   * Cota que se está por colocar, dibujada bajo el cursor.
+   *
+   * Verla antes de hacer clic es lo que permite ubicarla donde uno quiere y
+   * confirmar que está midiendo lo que cree.
+   */
+  const previewDim = useMemo(() => {
+    if (tool !== 'dimension' || newDim || !solved || dimPicks.length === 0) return null;
+    const res = inferDimension(sketch.primitives, solved, dimPicks);
+    return res.status === 'ok' ? previewDimension(res.dim, cursor) : null;
+  }, [tool, newDim, solved, dimPicks, sketch.primitives, cursor]);
+
   const dimensions = useMemo(
     () => (solved ? collectDimensions(sketch.primitives, solved, sketch.labelOffsets) : []),
     [sketch.primitives, sketch.labelOffsets, solved],
@@ -595,6 +612,60 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
 
   const preview = buildPreview(tool, pending.map((p) => p.at), snap?.at ?? cursor, sides);
 
+  /**
+   * Medida de lo que se está dibujando ahora mismo, para poder escribirla.
+   *
+   * Sólo en línea y círculo: son las dos donde uno sabe la medida de antemano
+   * y escribirla es más rápido que dibujar y después acotar.
+   */
+  const liveMeasure = (() => {
+    if (pending.length !== 1 || newDim) return null;
+    const from = pending[0].at;
+    const to = snap?.at ?? cursor;
+    const d = Math.hypot(to.x - from.x, to.y - from.y);
+    if (tool === 'line') return { label: 'Largo', value: d, from, to };
+    if (tool === 'circle') return { label: 'Diámetro', value: d * 2, from, to };
+    return null;
+  })();
+
+  /** Crea la geometría con la medida tipeada y la deja acotada. */
+  const commitDraft = () => {
+    if (!liveMeasure || draft === null) return;
+    const v = Number(draft.replace(',', '.'));
+    if (Number.isNaN(v) || v <= 0) { setMessage('Medida no válida'); return; }
+
+    const { from, to } = liveMeasure;
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) { setMessage('Movè el mouse para marcar la dirección'); return; }
+
+    if (tool === 'line') {
+      // El punto final va a la distancia pedida, en la dirección del cursor.
+      const end = { x: from.x + (dx / len) * v, y: from.y + (dy / len) * v };
+      let out = addLine(sketch.primitives, pending[0], freeSnap(end), snapRadius);
+      const line = [...out].reverse().find((x) => (x as { type: string }).type === 'line') as
+        { id: string; p1_id: string; p2_id: string } | undefined;
+      if (line) {
+        const res = applyConstraint(out, 'distance', [line.p1_id, line.p2_id], v);
+        if (!res.error) out = res.primitives;
+      }
+      setPrimitives(out);
+      setPending([freeSnap(end)]);
+    } else {
+      let out = addCircle(sketch.primitives, pending[0], v / 2, snapRadius);
+      const circle = [...out].reverse().find((x) => (x as { type: string }).type === 'circle') as
+        { id: string } | undefined;
+      if (circle) {
+        const res = applyConstraint(out, 'diameter', [circle.id], v);
+        if (!res.error) out = res.primitives;
+      }
+      setPrimitives(out);
+      setPending([]);
+    }
+    setDraft(null);
+    setMessage(null);
+  };
+
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
       {/* Barra de herramientas del boceto */}
@@ -602,8 +673,10 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
         <div className="ribbon-group">
           <div className="row">
             {TOOLS.map((t) => (
-              <button
+              <ToolButton
                 key={t.id}
+                icon={t.icon}
+                label={t.label}
                 className={tool === t.id ? 'active' : ''}
                 data-testid={`tool-${t.id}`}
                 title={`${t.label} (${t.key})`}
@@ -612,15 +685,18 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
                   setPending([]);
                   setDimPicks([]);
                   setNewDim(null);
+                  setDraft(null);
                 }}
-              >{t.label}</button>
+              />
             ))}
-            <button
+            <ToolButton
+              icon="grid"
+              label="Cuadrícula"
               className={snapGrid ? 'active' : ''}
               data-testid="toggle-grid-snap"
               title="Enganchar a los vértices de la cuadrícula (G)"
               onClick={() => setSnapGrid((v) => !v)}
-            >Cuadrícula</button>
+            />
             {tool === 'polygon' && (
               <input
                 type="number" min={3} max={64} value={sides} style={{ width: 56 }}
@@ -635,13 +711,15 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
         <div className="ribbon-group">
           <div className="row" style={{ flexWrap: 'wrap', maxWidth: 560 }}>
             {CONSTRAINTS.map((c) => (
-              <button
+              <ToolButton
                 key={c.kind}
+                icon={c.kind as IconName}
+                label={c.label}
                 data-testid={`constraint-${c.kind}`}
                 disabled={!c.accepts(selectedTypes)}
                 title={c.label}
                 onClick={() => runConstraint(c.kind)}
-              >{c.label}</button>
+              />
             ))}
           </div>
           <div className="label">Restricciones</div>
@@ -649,21 +727,27 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
 
         <div className="ribbon-group">
           <div className="row">
-            <button
+            <ToolButton
+              icon="symmetric" label="Simetría"
               data-testid="mod-mirror" disabled={selected.length < 2} onClick={doMirror}
               title="Seleccioná la geometría y, al final, la línea que hace de eje"
-            >Simetría</button>
-            <button
+            />
+            <ToolButton
+              icon="pattern_rect" label="Patrón rect."
               data-testid="mod-rect-pattern" disabled={selected.length === 0} onClick={doRectPattern}
-            >Patrón rect.</button>
-            <button
+            />
+            <ToolButton
+              icon="pattern_circ" label="Patrón circ."
               data-testid="mod-circ-pattern" disabled={selected.length < 2} onClick={doCircularPattern}
               title="Seleccioná la geometría y, al final, el punto que hace de centro"
-            >Patrón circ.</button>
-            <button
+            />
+            <ToolButton
+              icon="offset" label="Desfase"
               data-testid="mod-offset" disabled={selected.length === 0} onClick={doOffset}
-            >Desfase</button>
-            <button
+            />
+            <ToolButton
+              icon="prune"
+              label={`Limpiar sueltos${orphans.length > 0 ? ` (${orphans.length})` : ''}`}
               data-testid="mod-prune" disabled={orphans.length === 0}
               title="Borra los puntos que ya no sostienen ninguna curva"
               onClick={() => {
@@ -671,23 +755,25 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
                 setSelected([]);
                 setMessage(null);
               }}
-            >Limpiar sueltos{orphans.length > 0 && ` (${orphans.length})`}</button>
-            <button
+            />
+            <ToolButton
+              icon="trash" label="Borrar"
               data-testid="mod-delete" disabled={selected.length === 0}
               onClick={() => {
                 setPrimitives(deletePrimitives(sketch.primitives, selected));
                 setSelected([]);
               }}
-            >Borrar</button>
+            />
           </div>
           <div className="label">Modificar</div>
         </div>
 
         <div className="ribbon-group">
           <div className="row">
-            <button className="active" onClick={() => editSketch(null)}>
-              Terminar boceto
-            </button>
+            <ToolButton
+              icon="check" label="Terminar boceto"
+              className="active" onClick={() => editSketch(null)}
+            />
           </div>
           <div className="label">{sketch.name}</div>
         </div>
@@ -781,6 +867,23 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
             />
           ))}
 
+          {/* Cota en curso, siguiendo al cursor */}
+          {previewDim && (
+            <g opacity={0.9}>
+              <DimensionGlyph
+                dim={previewDim}
+                a={toScreen(previewDim.a)}
+                b={toScreen(previewDim.b)}
+                vertex={previewDim.vertex && toScreen(previewDim.vertex)}
+                label={toScreen(cursor)}
+                selected
+                preview
+                onPick={() => {}}
+                onEdit={() => {}}
+              />
+            </g>
+          )}
+
           {/* Ventana de selección */}
           {box && (() => {
             const a = toScreen(box.from), b = toScreen(box.to);
@@ -860,6 +963,31 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
           })}
         </svg>
 
+        {/* Medida de lo que se está dibujando: se puede escribir directamente */}
+        {liveMeasure && (() => {
+          const p = toScreen(liveMeasure.to);
+          return (
+            <div style={{ position: 'absolute', left: p.x + 16, top: p.y + 14, zIndex: 5 }}>
+              <label className="hint" style={{ display: 'block', marginBottom: 2 }}>
+                {liveMeasure.label}
+              </label>
+              <input
+                data-testid="live-measure"
+                autoFocus
+                value={draft ?? liveMeasure.value.toFixed(2)}
+                style={{ width: 90, textAlign: 'center' }}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitDraft();
+                  else if (e.key === 'Escape') { setDraft(null); setPending([]); }
+                  e.stopPropagation();
+                }}
+              />
+            </div>
+          );
+        })()}
+
         {/* Valor de una cota recién ubicada */}
         {newDim && (() => {
           const p = toScreen(newDim.at);
@@ -867,6 +995,8 @@ export default function SketchEditor({ sketch }: { sketch: SketchFeature }) {
             <input
               data-testid="new-dim-input"
               autoFocus
+              onFocus={(e) => e.target.select()}
+              title={dimensionText(newDim.dim.kind, newDim.dim.value)}
               value={newDim.value}
               style={{
                 position: 'absolute', left: p.x - 45, top: p.y - 12,

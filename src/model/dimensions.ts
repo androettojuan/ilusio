@@ -88,8 +88,17 @@ function lineIntersection(a1: P2, a2: P2, b1: P2, b2: P2): P2 | null {
   return { x: a1.x + t * r.x, y: a1.y + t * r.y };
 }
 
-const fmt = (n: number, suffix = '') =>
-  `${Number.isInteger(n) ? n : n.toFixed(2)}${suffix}`;
+const num = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+/** Texto de una cota con el prefijo que corresponde en un plano. */
+export function dimensionText(kind: DimensionKind, value: number): string {
+  switch (kind) {
+    case 'diameter': return `\u00d8${num(value)}`;
+    case 'radius': return `R${num(value)}`;
+    case 'angle': return `${num((value * 180) / Math.PI)}\u00b0`;
+    default: return num(value);
+  }
+}
 
 /**
  * Cotas listas para dibujar.
@@ -119,7 +128,9 @@ export function collectDimensions(
       case 'p2p_distance': {
         const a = point(prim.p1_id as string);
         const b = point(prim.p2_id as string);
-        if (a && b) out.push({ id, kind: 'distance', value, text: fmt(value), a, b, offset });
+        if (a && b) {
+          out.push({ id, kind: 'distance', value, text: dimensionText('distance', value), a, b, offset });
+        }
         break;
       }
 
@@ -128,7 +139,7 @@ export function collectDimensions(
         const ends = lineEnds(solved, prim.l_id as string);
         if (p && ends) {
           out.push({
-            id, kind: 'distance', value, text: fmt(value),
+            id, kind: 'distance', value, text: dimensionText('distance', value),
             a: p, b: projectOnLine(p, ends[0], ends[1]), offset,
           });
         }
@@ -147,7 +158,7 @@ export function collectDimensions(
         const dir = { x: Math.SQRT1_2, y: Math.SQRT1_2 };
         out.push({
           id, kind: spec.kind, value,
-          text: fmt(value, isDiameter ? '' : ''),
+          text: dimensionText(spec.kind, value),
           a: isDiameter
             ? { x: c.c.x - dir.x * c.r, y: c.c.y - dir.y * c.r }
             : c.c,
@@ -168,8 +179,7 @@ export function collectDimensions(
         const far = (ends: [P2, P2]) =>
           len(sub(ends[0], vertex)) > len(sub(ends[1], vertex)) ? ends[0] : ends[1];
         out.push({
-          id, kind: 'angle', value,
-          text: `${fmt((value * 180) / Math.PI)}°`,
+          id, kind: 'angle', value, text: dimensionText('angle', value),
           a: far(l1), b: far(l2), vertex, offset,
         });
         break;
@@ -231,6 +241,24 @@ export interface InferredDimension {
   value: number;
   /** Punto respecto del cual se mide el corrimiento de la etiqueta. */
   anchor: P2;
+  /** Extremos de la cota, para dibujarla antes de confirmarla. */
+  a: P2;
+  b: P2;
+  vertex?: P2;
+}
+
+/** Convierte una cota inferida en algo que se pueda dibujar ya mismo. */
+export function previewDimension(dim: InferredDimension, label: P2): Dimension {
+  return {
+    id: '__preview__',
+    kind: dim.kind,
+    value: dim.value,
+    text: dimensionText(dim.kind, dim.value),
+    a: dim.a,
+    b: dim.b,
+    vertex: dim.vertex,
+    offset: { x: label.x - dim.anchor.x, y: label.y - dim.anchor.y },
+  };
 }
 
 export type InferResult =
@@ -281,7 +309,10 @@ export function inferDimension(
       if (c?.kind !== 'line') return { status: 'invalid', message: 'No encuentro esa línea' };
       const v = value('distance', [id]);
       if (v === null) return { status: 'invalid', message: 'No pude medir esa línea' };
-      return { status: 'ok', dim: { kind: 'distance', ids: [id], value: v, anchor: mid(c.a, c.b) } };
+      return {
+        status: 'ok',
+        dim: { kind: 'distance', ids: [id], value: v, anchor: mid(c.a, c.b), a: c.a, b: c.b },
+      };
     }
 
     if (t === 'circle' || t === 'arc') {
@@ -293,7 +324,16 @@ export function inferDimension(
       }
       const v = value(kind, [id]);
       if (v === null) return { status: 'invalid', message: 'No pude medir esa curva' };
-      return { status: 'ok', dim: { kind, ids: [id], value: v, anchor: c.c } };
+      // El radio sale del centro; el diámetro cruza de lado a lado.
+      const dir = { x: Math.SQRT1_2, y: Math.SQRT1_2 };
+      return {
+        status: 'ok',
+        dim: {
+          kind, ids: [id], value: v, anchor: c.c,
+          a: kind === 'diameter' ? { x: c.c.x - dir.x * c.r, y: c.c.y - dir.y * c.r } : c.c,
+          b: { x: c.c.x + dir.x * c.r, y: c.c.y + dir.y * c.r },
+        },
+      };
     }
 
     return { status: 'need-more', hint: 'Elegí otro punto o una línea para medir contra él' };
@@ -308,7 +348,11 @@ export function inferDimension(
     if (!pa || !pb) return { status: 'invalid', message: 'No encuentro esos puntos' };
     return {
       status: 'ok',
-      dim: { kind: 'distance', ids: [a, b], value: Math.hypot(pb.x - pa.x, pb.y - pa.y), anchor: mid(pa, pb) },
+      dim: {
+        kind: 'distance', ids: [a, b],
+        value: Math.hypot(pb.x - pa.x, pb.y - pa.y),
+        anchor: mid(pa, pb), a: pa, b: pb,
+      },
     };
   }
 
@@ -316,9 +360,16 @@ export function inferDimension(
     const pointId = ta === 'point' ? a : b;
     const lineId = ta === 'point' ? b : a;
     const p = solved.points.get(pointId);
+    const ends = lineEnds(solved, lineId);
     const v = value('distance', [pointId, lineId]);
-    if (!p || v === null) return { status: 'invalid', message: 'No pude medir esa distancia' };
-    return { status: 'ok', dim: { kind: 'distance', ids: [pointId, lineId], value: v, anchor: p } };
+    if (!p || !ends || v === null) {
+      return { status: 'invalid', message: 'No pude medir esa distancia' };
+    }
+    const foot = projectOnLine(p, ends[0], ends[1]);
+    return {
+      status: 'ok',
+      dim: { kind: 'distance', ids: [pointId, lineId], value: v, anchor: p, a: p, b: foot },
+    };
   }
 
   if (ta === 'line' && tb === 'line') {
@@ -340,9 +391,13 @@ export function inferDimension(
       const dist = Math.abs(
         ((p.y - cb.a.y) * db.x - (p.x - cb.a.x) * db.y) / (Math.hypot(db.x, db.y) || 1),
       );
+      const foot = projectOnLine(p, cb.a, cb.b);
       return {
         status: 'ok',
-        dim: { kind: 'distance', ids: [endpoint, b], value: dist, anchor: mid(ca.a, cb.a) },
+        dim: {
+          kind: 'distance', ids: [endpoint, b], value: dist,
+          anchor: mid(ca.a, cb.a), a: p, b: foot,
+        },
       };
     }
 
@@ -352,7 +407,16 @@ export function inferDimension(
     // de la etiqueta al dibujarla.
     const vertex = lineIntersection(ca.a, ca.b, cb.a, cb.b);
     if (!vertex) return { status: 'invalid', message: 'Esas líneas no se cortan' };
-    return { status: 'ok', dim: { kind: 'angle', ids: [a, b], value: v, anchor: vertex } };
+    const far = (ends: [P2, P2]) =>
+      Math.hypot(ends[0].x - vertex.x, ends[0].y - vertex.y)
+        > Math.hypot(ends[1].x - vertex.x, ends[1].y - vertex.y) ? ends[0] : ends[1];
+    return {
+      status: 'ok',
+      dim: {
+        kind: 'angle', ids: [a, b], value: v, anchor: vertex,
+        a: far([ca.a, ca.b]), b: far([cb.a, cb.b]), vertex,
+      },
+    };
   }
 
   return { status: 'invalid', message: 'No sé qué medir entre esos dos elementos' };

@@ -1,5 +1,6 @@
 import { useDocument } from '../store/useDocument';
-import { FEATURE_GLYPH, PLANE_LABEL } from './icons';
+import { FeatureIcon, PLANE_LABEL } from './icons';
+import { ICONS } from './ToolIcons';
 import { useFeatureMenu } from './useFeatureMenu';
 import type { Feature } from '../model/types';
 
@@ -57,7 +58,7 @@ export default function Navigator() {
       }}
       onContextMenu={menu.onContextMenu(f)}
     >
-      <span className="glyph">{FEATURE_GLYPH[f.type]}</span>
+      <span className="glyph"><FeatureIcon type={f.type} /></span>
       <span className="name" title={f.name}>{f.name}</span>
       <Eye on={f.visible} onClick={(e) => { e.stopPropagation(); toggleVisible(f.id); }} />
     </div>
@@ -74,7 +75,7 @@ export default function Navigator() {
       <Section title="Origen">
         {(Object.keys(PLANE_LABEL) as (keyof typeof PLANE_LABEL)[]).map((p) => (
           <div key={p} className="tree-node" style={{ color: 'var(--muted)' }}>
-            <span className="glyph">▱</span>
+            <span className="glyph">{ICONS.plane}</span>
             <span className="name">{PLANE_LABEL[p]}</span>
           </div>
         ))}
@@ -106,7 +107,7 @@ export default function Navigator() {
                 },
               ])}
             >
-              <span className="glyph">▤</span>
+              <span className="glyph">{ICONS.canvas}</span>
               <span className="name" title={c.name}>{c.name}</span>
               <Eye
                 on={c.visible}

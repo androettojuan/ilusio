@@ -73,12 +73,17 @@ hay capa de traducción entre lo que se dibuja y lo que se resuelve.
   para cerrar contra otra curva.
 - **Restricciones**: horizontal, vertical, coincidente, paralela, perpendicular,
   igual, tangente, simetría, concéntrica, punto medio y fijar.
+- **Medida al dibujar**: mientras trazás una línea o un círculo aparece su
+  medida en vivo y podés escribirla directamente. La geometría se crea con ese
+  valor exacto y queda acotada.
 - **Cota** (una sola herramienta, en Crear): elegís qué medir y ella infiere la
   cota que corresponde — una línea da su largo, un círculo su diámetro, un arco
   su radio, dos puntos la distancia, un punto y una línea la perpendicular, dos
-  líneas el ángulo (o la separación si son paralelas). Después hacés clic donde
-  querés ubicarla y escribís la medida. Se dibujan con sus flechas y su número:
-  doble clic cambia la medida y se arrastran para acomodarlas.
+  líneas el ángulo (o la separación si son paralelas). La cota se dibuja en
+  verde siguiendo al cursor para que la ubiques donde querés, y recién ahí
+  escribís la medida. Una vez puesta: doble clic la cambia y se arrastra para
+  acomodarla. Con sus prefijos de plano (Ø, R, °) y la línea de cota cortada
+  donde va el número.
 - **Selección por ventana**: arrastrando con el botón izquierdo sobre una zona
   vacía. De izquierda a derecha entra sólo lo que quede entero adentro (caja
   azul llena); de derecha a izquierda, todo lo que la ventana toque (caja verde
@@ -160,8 +165,12 @@ carga tarda unos segundos por el `.wasm` de OCCT.
   Radio y Diámetro por separado obliga al usuario a saber de antemano qué va a
   medir. Mirando los tipos de lo que eligió, la herramienta lo deduce sola, que
   es como funciona en cualquier CAD.
-- **La línea de cota pasa por donde quedó la etiqueta.** Si el número flota
-  lejos de su cota, el dibujo deja de leerse.
+- **La línea de cota pasa por donde quedó la etiqueta**, y se corta para dejar
+  lugar al número. Si el número flota lejos de su cota o la tapa, el dibujo
+  deja de leerse.
+- **Los botones llevan icono dibujado a mano en SVG.** Con el nombre solo cuesta
+  encontrar la herramienta de un vistazo, y una fuente de iconos sería otra
+  dependencia para veinte dibujos simples (`src/ui/ToolIcons.tsx`).
 - **Una cota que no se ve no sirve.** Aplicarla y que no aparezca nada deja al
   usuario sin saber qué midió ni cómo corregirlo. Por eso se dibujan con sus
   líneas de referencia, flechas y número, y el número es el blanco de clic para

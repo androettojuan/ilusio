@@ -115,6 +115,10 @@ input[type='number'], input[type='text'], select {
 .tree-node.selected { background: #35506e; }
 .tree-node.error { color: var(--danger); }
 .tree-node .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-node .glyph,
+.tl-chip .glyph { display: inline-flex; align-items: center; color: var(--muted); }
+.tree-node.selected .glyph,
+.tl-chip.selected .glyph { color: var(--text); }
 .tree-group { margin-left: 10px; }
 
 .eye {
@@ -175,7 +179,7 @@ input[type='number'], input[type='text'], select {
 .tl-chip.selected { border-color: var(--accent); }
 .tl-chip.suppressed { opacity: 0.4; text-decoration: line-through; }
 .tl-chip.failed { border-color: var(--danger); color: var(--danger); }
-.tl-chip .glyph { font-size: 14px; line-height: 1; }
+
 .tl-marker {
   width: 3px;
   align-self: stretch;
