@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # `npm ci` dispara el postinstall que copia los .wasm a public/wasm.
+      - run: npm ci
+
+      - name: Tipos
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Pruebas de geometría
+        run: npm test
+
+      - name: Kernel (OpenCascade y PlaneGCS, sin navegador)
+        run: npm run test:kernel
+
+      - name: Build
+        run: npm run build
